@@ -266,7 +266,11 @@ async def handle_message(room: GameRoom, player: Player, message: dict):
         await handle_take_pile(room, player)
     
     elif action == "end_turn" and room.phase == GamePhase.PHASE_ONE:
-        if room.players[room.current_player_index].id == player.id:
+        # Remove manual end turn - turns should end automatically when placing on own stack
+        # Only allow if player hasn't drawn yet and must draw
+        player_obj = room.get_player_by_id(player.id)
+        if (room.players[room.current_player_index].id == player.id and 
+            not player_obj.hand and not room.deck):
             await end_player_turn(room, player)
     
     elif action == "donate_cards" and room.phase == GamePhase.DONATION:
@@ -294,8 +298,11 @@ async def handle_draw_card(room: GameRoom, player: Player):
     if not room.deck:
         return {"error": "Deck is empty"}
     
+    if player.hand:  # Player already has a card in hand
+        return {"error": "You already have a card in hand"}
+    
     # Check if player should give from stack first (if they have more than 1 card in stack)
-    if len(player.visible_stack) > 1 and not player.has_drawn_this_turn:
+    if len(player.visible_stack) > 1:
         # Check if they have valid moves from their stack
         top_card = player.visible_stack[-1]
         has_valid_stack_move = False
@@ -316,8 +323,7 @@ async def handle_draw_card(room: GameRoom, player: Player):
     
     # Draw card from deck
     drawn_card = room.deck.pop()
-    player.hand.append(drawn_card)
-    player.has_drawn_this_turn = True
+    player.hand = [drawn_card]  # Player can only have one card in hand
     room.last_drawn_card = drawn_card
     
     # Check if this was the last card - determine trump
@@ -343,11 +349,9 @@ async def handle_place_card(room: GameRoom, player: Player, message: dict):
     
     # Find the card in player's hand
     card_to_place = None
-    card_index = -1
-    for i, hand_card in enumerate(player.hand):
+    for hand_card in player.hand:
         if hand_card.suit == card_data["suit"] and hand_card.rank == card_data["rank"]:
             card_to_place = hand_card
-            card_index = i
             break
     
     if not card_to_place:
@@ -358,43 +362,43 @@ async def handle_place_card(room: GameRoom, player: Player, message: dict):
     if not target_player:
         return
     
-    # Check if move is valid
-    if not room.can_stack_card(card_to_place, target_player.visible_stack):
-        # Invalid move - increment bad card counter
-        player.bad_card_counter += 1
-        await manager.send_personal_message(
-            json.dumps({"type": "error", "message": "Invalid card placement! Bad card counter increased."}), 
-            player.id
-        )
+    # Check if placing on own stack or another player's stack
+    placing_on_own_stack = (target_player_id == player.id)
+    
+    if not placing_on_own_stack:
+        # Placing on another player's stack - check seniority rule
+        if not room.can_stack_card(card_to_place, target_player.visible_stack):
+            # Invalid move - increment bad card counter
+            player.bad_card_counter += 1
+            await manager.send_personal_message(
+                json.dumps({"type": "error", "message": "Invalid card placement! Bad card counter increased."}), 
+                player.id
+            )
+            await end_player_turn(room, player)
+            return
+        
+        # Check for 6 on Ace penalty
+        if (card_to_place.rank == 6 and target_player.visible_stack and 
+            target_player.visible_stack[-1].rank == 14):
+            target_player.bad_card_counter += 1
+            await manager.send_personal_message(
+                json.dumps({"type": "notification", "message": "You received 6 on Ace! Bad card counter increased."}), 
+                target_player.id
+            )
+        
+        # Place the card on another player's stack
+        target_player.visible_stack.append(card_to_place)
+        player.hand.remove(card_to_place)
+        
+        # Player can continue - they can draw again if deck exists
+        await send_game_state(room)
+    else:
+        # Placing on own stack - this ends the turn automatically
+        player.visible_stack.append(card_to_place)
+        player.hand.remove(card_to_place)
+        
+        # Turn ends automatically when placing on own stack
         await end_player_turn(room, player)
-        return
-    
-    # Check for 6 on Ace penalty
-    if (card_to_place.rank == 6 and target_player.visible_stack and 
-        target_player.visible_stack[-1].rank == 14):
-        target_player.bad_card_counter += 1
-        await manager.send_personal_message(
-            json.dumps({"type": "notification", "message": "You received 6 on Ace! Bad card counter increased."}), 
-            target_player.id
-        )
-    
-    # Place the card
-    target_player.visible_stack.append(card_to_place)
-    player.hand.pop(card_index)
-    player.cards_played_this_turn += 1
-    
-    # Check if player can continue (has more valid moves)
-    if player.hand:
-        valid_moves = room.get_valid_moves_for_player(player)
-        if valid_moves:
-            # Player can continue, draw another card if possible
-            if room.deck:
-                await handle_draw_card(room, player)
-                await send_game_state(room)
-                return
-    
-    # End turn if no more moves or no deck
-    await end_player_turn(room, player)
 
 async def handle_give_from_stack(room: GameRoom, player: Player, message: dict):
     """Handle giving card from player's own stack to another player"""
@@ -436,30 +440,9 @@ async def handle_give_from_stack(room: GameRoom, player: Player, message: dict):
     card = player.visible_stack.pop()
     target_player.visible_stack.append(card)
     
-    # Check if player can give another card from stack
-    if len(player.visible_stack) > 1:
-        top_card = player.visible_stack[-1]
-        has_valid_move = False
-        
-        for tp in room.players:
-            if tp.id != player.id and room.can_stack_card(top_card, tp.visible_stack):
-                has_valid_move = True
-                break
-        
-        if has_valid_move:
-            # Player can continue giving from stack
-            await send_game_state(room)
-            return
-    
-    # No more valid moves from stack, now player can draw
-    if room.deck and not player.has_drawn_this_turn:
-        result = await handle_draw_card(room, player)
-        if result.get("success") and player.hand:
-            # After drawing, check if can place the drawn card
-            await send_game_state(room)
-            return
-    
-    await end_player_turn(room, player)
+    # Player continues their turn - they can give more from stack or draw from deck
+    # Don't end turn automatically, let player decide next action
+    await send_game_state(room)
 
 async def end_player_turn(room: GameRoom, player: Player):
     """End current player's turn and move to next player"""
@@ -467,7 +450,7 @@ async def end_player_turn(room: GameRoom, player: Player):
     player.has_drawn_this_turn = False
     player.cards_played_this_turn = 0
     
-    # If player has cards in hand but couldn't place them, put them on their own stack
+    # If player still has cards in hand, put them on their own stack
     while player.hand:
         card = player.hand.pop()
         player.visible_stack.append(card)
