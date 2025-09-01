@@ -208,7 +208,7 @@
         .card {
             width: 80px;
             height: 110px;
-            background: rgba(125, 124, 124, 0.504);
+            background: white;
             border-radius: 8px;
             border: 2px solid #333;
             display: flex;
@@ -489,7 +489,7 @@
                 <div class="players-area" id="playersArea"></div>
                 
                 <div class="center-area">
-                    <div class="deck-area" id="deckArea">
+                    <div class="deck-area" id="deckArea" onclick="drawCard()">
                         <span>Deck</span>
                         <span id="deckCount"></span>
                         <div id="trumpIndicator" class="trump-indicator hidden"></div>
@@ -664,16 +664,27 @@
             const myPlayer = gameState.players?.find(p => p.id === gameState.player_id);
             if (!myPlayer) return;
 
+            const hasHandCard = myPlayer.hand && myPlayer.hand.length > 0;
+            const hasStackCards = myPlayer.visible_stack && myPlayer.visible_stack.length > 1;
+
             // Show draw button if player has no cards in hand and deck exists
-            const canDraw = gameState.deck_size > 0 && (!myPlayer.hand || myPlayer.hand.length === 0);
+            const canDraw = gameState.deck_size > 0 && !hasHandCard;
             drawButton.style.display = canDraw ? 'block' : 'none';
 
             // Show give button if player has more than 1 card in their stack
-            const canGive = myPlayer.visible_stack && myPlayer.visible_stack.length > 1;
-            giveButton.style.display = canGive ? 'block' : 'none';
+            giveButton.style.display = hasStackCards ? 'block' : 'none';
 
-            // Always show end turn button during player's turn
-            endTurnButton.style.display = 'block';
+            // Change end turn to "Place on My Stack" when player has a card in hand
+            if (hasHandCard) {
+                endTurnButton.textContent = 'Place on My Stack';
+                endTurnButton.onclick = placeCardOnOwnStack;
+                endTurnButton.style.display = 'block';
+            } else {
+                endTurnButton.textContent = 'End Turn';
+                endTurnButton.onclick = endTurn;
+                // Only show end turn if no actions are required
+                endTurnButton.style.display = (!canDraw && !hasStackCards) ? 'block' : 'none';
+            }
         }
 
         function updatePhaseDisplay() {
@@ -747,22 +758,25 @@
                 instruction = 'Click Ready when you\'re ready to start!';
             } else if (gameState.phase === 'phase_one') {
                 if (isMyTurn) {
-                    if (!myPlayer.hand || myPlayer.hand.length === 0) {
-                        if (myPlayer.visible_stack && myPlayer.visible_stack.length > 1) {
-                            instruction = 'First check if you can give cards from your stack (7→8, 8→9, etc), then draw from deck';
-                        } else {
-                            instruction = 'Draw a card from the deck to start your turn';
-                        }
-                    } else {
-                        instruction = 'Place your drawn card on another player\'s stack if possible (7→8, 8→9, 6→A)';
+                    const hasHandCard = myPlayer.hand && myPlayer.hand.length > 0;
+                    const hasStackCards = myPlayer.visible_stack && myPlayer.visible_stack.length > 1;
+                    
+                    if (!hasHandCard && !hasStackCards) {
+                        instruction = 'Draw a card from the deck';
+                    } else if (!hasHandCard && hasStackCards) {
+                        instruction = 'Give cards from stack first, then draw from deck';
+                    } else if (hasHandCard) {
+                        instruction = 'Place card on others\' stacks (seniority rule) or your own stack to end turn';
                     }
                 } else {
                     const currentPlayer = gameState.players[gameState.current_player_index];
-                    instruction = `Waiting for ${currentPlayer ? currentPlayer.username : 'player'} to make their move`;
+                    instruction = `${currentPlayer ? currentPlayer.username : 'Player'}\'s turn`;
                 }
             }
             
-            if (instruction) {
+            // Only show instruction if it's different from the last one
+            if (instruction && instruction !== window.lastInstruction) {
+                window.lastInstruction = instruction;
                 showNotification(instruction, 'info');
             }
         }
@@ -1073,6 +1087,14 @@
                         target_player_id: targetPlayerId
                     }));
                 }
+            }
+        }
+
+        function placeCardOnOwnStack() {
+            const myPlayer = gameState.players?.find(p => p.id === gameState.player_id);
+            if (myPlayer && myPlayer.hand && myPlayer.hand.length > 0) {
+                const card = myPlayer.hand[0];
+                placeCard(card, gameState.player_id);
             }
         }
 
