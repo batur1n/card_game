@@ -468,17 +468,9 @@ function renderVisibleStack(stack, playerId) {
                 locked => locked.suit === card.suit && locked.rank === card.rank
             );
             
-            if (!isLocked) {
-                // Check if there are valid targets for this card
-                for (let targetPlayer of gameState.players) {
-                    if (targetPlayer.id !== gameState.player_id) {
-                        if (canStackCardOnTarget(card, targetPlayer.visible_stack)) {
-                            canDragFromStack = true;
-                            break;
-                        }
-                    }
-                }
-            }
+            // Allow dragging if not locked (player can attempt to give, even if it violates seniority)
+            // Backend will handle penalties for invalid moves
+            canDragFromStack = !isLocked;
         }
         
         console.log('Stack card render:', {
@@ -553,44 +545,51 @@ function renderHiddenCards(hiddenCards) {
 }
 
 function updateGameBoard() {
-    // Update battle pile
+    // Update battle pile (only visible in phase_two)
     const battlePile = document.getElementById('battlePile');
-    if (battlePile && gameState.battle_pile && gameState.battle_pile.length > 0) {
-        battlePile.innerHTML = '<span class="pile-label">Battle Pile</span>' + gameState.battle_pile.map((card, index) => 
-            `<div class="card ${card.suit}" style="z-index: ${index + 1}; left: ${10 + index * 15}px; top: ${10 + index * 3}px; position: absolute;">
-                <div class="rank rank-top-left">${getRankSymbol(card.rank)}</div>
-                <div class="suit suit-top-left">${getSuitSymbol(card.suit)}</div>
-                <div class="rank rank-bottom-right">${getRankSymbol(card.rank)}</div>
-                <div class="suit suit-bottom-right">${getSuitSymbol(card.suit)}</div>
-            </div>`
-        ).join('');
-        battlePile.classList.remove('empty');
-    } else if (battlePile) {
+    if (battlePile) {
         if (gameState.phase === 'phase_two') {
-            battlePile.innerHTML = '<span class="pile-label">Drop card here</span>';
-            battlePile.classList.add('empty');
+            battlePile.style.display = 'flex';
+            if (gameState.battle_pile && gameState.battle_pile.length > 0) {
+                battlePile.innerHTML = '<span class="pile-label">Battle Pile</span>' + gameState.battle_pile.map((card, index) => 
+                    `<div class="card ${card.suit}" style="z-index: ${index + 1}; left: ${10 + index * 15}px; top: ${10 + index * 3}px; position: absolute;">
+                        <div class="rank rank-top-left">${getRankSymbol(card.rank)}</div>
+                        <div class="suit suit-top-left">${getSuitSymbol(card.suit)}</div>
+                        <div class="rank rank-bottom-right">${getRankSymbol(card.rank)}</div>
+                        <div class="suit suit-bottom-right">${getSuitSymbol(card.suit)}</div>
+                    </div>`
+                ).join('');
+                battlePile.classList.remove('empty');
+            } else {
+                battlePile.innerHTML = '<span class="pile-label">Drop card here</span>';
+                battlePile.classList.add('empty');
+            }
         } else {
-            battlePile.innerHTML = '<span class="pile-label">Battle Pile</span>';
-            battlePile.classList.remove('empty');
+            // Hide battle pile in other phases
+            battlePile.style.display = 'none';
         }
     }
     
     // Update discarded pile (show card backs for discarded cards in Phase 2)
     const discardedPile = document.getElementById('discardedPile');
-    if (discardedPile && gameState.phase === 'phase_two') {
-        // We need to track discarded cards count - for now show visual representation
-        // Backend needs to send discarded_count
-        const discardedCount = gameState.discarded_count || 0;
-        if (discardedCount > 0) {
-            const cardsToShow = Math.min(discardedCount, 8);
-            let discardedHTML = '<span class="pile-label">Discarded</span>';
-            for (let i = 0; i < cardsToShow; i++) {
-                const offset = (i / cardsToShow) * 6;
-                discardedHTML += `<div class="discarded-card-back" style="top: ${10 + offset}px; left: ${10 + offset}px; z-index: ${i};"></div>`;
+    if (discardedPile) {
+        if (gameState.phase === 'phase_two') {
+            discardedPile.style.display = 'flex';
+            const discardedCount = gameState.discarded_count || 0;
+            if (discardedCount > 0) {
+                const cardsToShow = Math.min(discardedCount, 8);
+                let discardedHTML = '<span class="pile-label">Discarded</span>';
+                for (let i = 0; i < cardsToShow; i++) {
+                    const offset = (i / cardsToShow) * 6;
+                    discardedHTML += `<div class="discarded-card-back" style="top: ${10 + offset}px; left: ${10 + offset}px; z-index: ${i};"></div>`;
+                }
+                discardedPile.innerHTML = discardedHTML;
+            } else {
+                discardedPile.innerHTML = '<span class="pile-label">Discarded</span>';
             }
-            discardedPile.innerHTML = discardedHTML;
         } else {
-            discardedPile.innerHTML = '<span class="pile-label">Discarded</span>';
+            // Hide discarded pile in other phases
+            discardedPile.style.display = 'none';
         }
     }
     
@@ -598,6 +597,9 @@ function updateGameBoard() {
     if (document.getElementById('deckArea') && gameState.phase !== 'phase_two') {
         updateDeckDisplay();
     }
+    
+    // Update last drawn card display (phase_one only)
+    updateLastDrawnCard();
 }
 
 function updateDeckDisplay() {
@@ -660,6 +662,62 @@ function updateDeckDisplay() {
     ">${deckSize}</span>`;
     
     deckArea.innerHTML = deckHTML;
+}
+
+function updateLastDrawnCard() {
+    // Show last drawn card for all players to see in phase_one
+    if (gameState.phase !== 'phase_one' || !gameState.last_drawn_card) {
+        // Hide or remove last drawn card display
+        const existingDisplay = document.getElementById('lastDrawnCardDisplay');
+        if (existingDisplay) {
+            existingDisplay.remove();
+        }
+        return;
+    }
+    
+    const card = gameState.last_drawn_card;
+    const centerArea = document.querySelector('.center-area');
+    
+    if (!centerArea) return;
+    
+    // Check if display already exists
+    let display = document.getElementById('lastDrawnCardDisplay');
+    if (!display) {
+        display = document.createElement('div');
+        display.id = 'lastDrawnCardDisplay';
+        display.style.cssText = `
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 150;
+            text-align: center;
+        `;
+        centerArea.appendChild(display);
+    }
+    
+    // Update display with current drawn card
+    display.innerHTML = `
+        <div style="
+            background: rgba(0,0,0,0.9);
+            padding: 15px;
+            border-radius: 10px;
+            border: 2px solid #f39c12;
+        ">
+            <div style="color: white; font-weight: bold; margin-bottom: 10px;">Last Drawn Card</div>
+            <div class="card ${card.suit}" style="
+                width: 80px;
+                height: 110px;
+                margin: 0 auto;
+                position: relative;
+            ">
+                <div class="rank rank-top-left">${getRankSymbol(card.rank)}</div>
+                <div class="suit suit-top-left">${getSuitSymbol(card.suit)}</div>
+                <div class="rank rank-bottom-right">${getRankSymbol(card.rank)}</div>
+                <div class="suit suit-bottom-right">${getSuitSymbol(card.suit)}</div>
+            </div>
+        </div>
+    `;
 }
 
 function updateHand() {
@@ -823,6 +881,12 @@ function handleDrop(e) {
         
         if (draggedCard.source === 'stack') {
             // Dragging from own stack to another player's stack
+            // Don't allow giving to self - this would cause penalty
+            if (playerId === gameState.player_id) {
+                console.log('Cannot give from stack to own stack - ignoring drop');
+                return;
+            }
+            
             console.log('Drag from stack to stack - sending give_from_stack');
             if (ws && gameState.phase === 'phase_one') {
                 ws.send(JSON.stringify({
@@ -1018,35 +1082,68 @@ document.addEventListener('keydown', function(e) {
 // Add new donation functions
 
 function showDonationUI() {
+    console.log('showDonationUI called');
     const myPlayer = gameState.players?.find(p => p.id === gameState.player_id);
     const isMyTurn = gameState.players && 
         gameState.players[gameState.current_player_index]?.id === gameState.player_id;
     
+    console.log('showDonationUI check:', {
+        isMyTurn,
+        myPlayerHand: myPlayer?.hand?.length || 0,
+        myPlayerBadCards: myPlayer?.bad_card_counter
+    });
+    
     if (!isMyTurn) {
+        console.log('Not my turn, hiding donation UI');
         hideDonationUI();
         return;
     }
     
-    // Check if there are players who need donations (excluding self)
-    const playersNeedingCards = gameState.players.filter(p => 
-        p.bad_card_counter > 0 && p.id !== gameState.player_id
-    );
+    // Check if there are players who need donations from ME (current player)
+    // Use donation tracker to see if I've completed my donations to each recipient
+    const playersNeedingCards = gameState.players.filter(p => {
+        if (p.id === gameState.player_id) return false; // Exclude self
+        if (p.bad_card_counter <= 0) return false; // No penalty, no need to donate
+        
+        // Check donation tracker to see how many cards I've donated to this player
+        const recipientTracker = gameState.donation_tracker?.[p.id] || {};
+        const myDonations = recipientTracker[gameState.player_id] || 0;
+        const stillNeeded = p.bad_card_counter - myDonations;
+        
+        return stillNeeded > 0; // This player still needs cards from me
+    });
     
-    if (playersNeedingCards.length === 0) {
-        hideDonationUI();
-        return;
-    }
+    console.log('Players needing cards from me:', playersNeedingCards.map(p => ({
+        username: p.username, 
+        totalNeeds: p.bad_card_counter,
+        alreadyDonated: (gameState.donation_tracker?.[p.id] || {})[gameState.player_id] || 0,
+        stillNeeds: p.bad_card_counter - ((gameState.donation_tracker?.[p.id] || {})[gameState.player_id] || 0)
+    })));
     
     // Check if I have cards to donate (from hand during donation phase)
     if (!myPlayer.hand || myPlayer.hand.length === 0) {
+        console.log('No cards to donate, sending empty donations');
         // No cards to donate - submit empty donations to move to next player
         sendMessage({
             action: 'donate_cards',
             donations: {}
         });
+        hideDonationUI();
         return;
     }
     
+    if (playersNeedingCards.length === 0) {
+        console.log('No players need cards (excluding self), sending empty donations to advance turn');
+        // No one to donate to - submit empty donations to move to next player
+        sendMessage({
+            action: 'donate_cards',
+            donations: {}
+        });
+        hideDonationUI();
+        return;
+    }
+    
+    console.log('Starting donation process for', playersNeedingCards.length, 'recipients');
     // Start donation process with first player
     showDonationForPlayer(playersNeedingCards, 0);
 }
@@ -1067,8 +1164,8 @@ function showDonationForPlayer(recipients, recipientIndex) {
     currentRecipientIndex = recipientIndex;
     
     if (recipientIndex >= recipients.length) {
-        // All recipients processed, submit donations
-        submitAllDonations();
+        // All recipients processed - this shouldn't happen now since we send one at a time
+        // But keep this as a safety check
         return;
     }
     
@@ -1076,7 +1173,26 @@ function showDonationForPlayer(recipients, recipientIndex) {
     const myPlayer = gameState.players?.find(p => p.id === gameState.player_id);
     
     if (!myPlayer || !myPlayer.hand || myPlayer.hand.length === 0) {
-        // No cards to donate, move to next recipient
+        // No cards to donate - send empty donation to skip this recipient
+        if (ws) {
+            ws.send(JSON.stringify({
+                action: 'donate_cards',
+                donations: {}
+            }));
+        }
+        hideDonationUI();
+        return;
+    }
+    
+    // Check if we've already fully donated to this recipient
+    // (based on game state's donation tracking)
+    const donationTracker = gameState.donation_tracker || {};
+    const recipientDonations = donationTracker[recipient.id] || {};
+    const myDonations = recipientDonations[myPlayer.id] || 0;
+    const stillNeeded = recipient.bad_card_counter - myDonations;
+    
+    if (stillNeeded <= 0) {
+        // Already completed donations to this recipient, try next
         showDonationForPlayer(recipients, recipientIndex + 1);
         return;
     }
@@ -1084,8 +1200,8 @@ function showDonationForPlayer(recipients, recipientIndex) {
     // Show donation interface for this specific recipient
     let donationHTML = '<div id="donationInterface" class="donation-interface">';
     donationHTML += `<h3>Donate cards to ${recipient.username}</h3>`;
-    donationHTML += `<p>They need ${recipient.bad_card_counter} card(s)</p>`;
-    donationHTML += `<p>Select up to ${recipient.bad_card_counter} cards from your hand:</p>`;
+    donationHTML += `<p>They need ${stillNeeded} more card(s) from you</p>`;
+    donationHTML += `<p>Select up to ${stillNeeded} cards from your hand:</p>`;
     
     donationHTML += '<div class="donation-my-stack">';
     donationHTML += myPlayer.hand.map((card, index) => {
@@ -1119,15 +1235,22 @@ let selectedDonationCards = new Set();
 
 function toggleDonationCard(cardIndex) {
     const recipient = currentDonationRecipients[currentRecipientIndex];
+    const myPlayer = gameState.players?.find(p => p.id === gameState.player_id);
+    
+    // Calculate how many cards still needed
+    const donationTracker = gameState.donation_tracker || {};
+    const recipientDonations = donationTracker[recipient.id] || {};
+    const myDonations = recipientDonations[myPlayer.id] || 0;
+    const stillNeeded = recipient.bad_card_counter - myDonations;
     
     if (selectedDonationCards.has(cardIndex)) {
         selectedDonationCards.delete(cardIndex);
     } else {
         // Check if we haven't exceeded the limit
-        if (selectedDonationCards.size < recipient.bad_card_counter) {
+        if (selectedDonationCards.size < stillNeeded) {
             selectedDonationCards.add(cardIndex);
         } else {
-            showNotification(`You can only select ${recipient.bad_card_counter} card(s) for this player`, 'error');
+            showNotification(`You can only select ${stillNeeded} more card(s) for this player`, 'error');
             return;
         }
     }
@@ -1153,32 +1276,30 @@ function updateDonationCardSelection() {
 function confirmDonationToPlayer() {
     const recipient = currentDonationRecipients[currentRecipientIndex];
     
-    // Store donations for this recipient (even if empty)
+    // Send donation for THIS recipient immediately
+    const donationsForThisRecipient = {};
     if (selectedDonationCards.size > 0) {
-        allDonations[recipient.id] = Array.from(selectedDonationCards);
+        donationsForThisRecipient[recipient.id] = Array.from(selectedDonationCards);
     }
     
-    // Clear selection for next player
-    selectedDonationCards.clear();
-    
-    // Move to next recipient
-    showDonationForPlayer(currentDonationRecipients, currentRecipientIndex + 1);
-}
-
-function submitAllDonations() {
-    // Send all donations to server
     if (ws) {
         ws.send(JSON.stringify({
             action: 'donate_cards',
-            donations: allDonations
+            donations: donationsForThisRecipient
         }));
     }
     
-    // Reset state
-    allDonations = {};
+    // Clear selection and wait for server to send updated game state
     selectedDonationCards.clear();
-    currentDonationRecipients = [];
-    currentRecipientIndex = 0;
+    hideDonationUI();
+    
+    // Don't immediately show next recipient - wait for server update
+    // The server will send updated game state and showDonationUI() will be called again
+}
+
+function submitAllDonations() {
+    // This function is no longer used but kept for compatibility
+    // We now send donations one recipient at a time
     hideDonationUI();
 }
 
@@ -1193,13 +1314,23 @@ function updateUI() {
     if (gameState.phase === 'donation') {
         const isMyTurn = gameState.players && 
             gameState.players[gameState.current_player_index]?.id === gameState.player_id;
+        const currentPlayer = gameState.players && gameState.players[gameState.current_player_index];
+        console.log('Donation phase:', {
+            isMyTurn,
+            currentPlayerUsername: currentPlayer?.username,
+            myPlayerId: gameState.player_id,
+            currentPlayerIndex: gameState.current_player_index
+        });
         if (isMyTurn) {
             showDonationUI();
+            hideWaitingModal();
         } else {
             hideDonationUI();
+            showWaitingModal('Donation Phase', `Waiting for ${currentPlayer?.username} to donate cards...`);
         }
     } else {
         hideDonationUI();
+        hideWaitingModal();
     }
     
     // Handle phase 2 UI
