@@ -428,6 +428,7 @@ async def handle_draw_card(room: GameRoom, player: Player):
     
     player.hand = [drawn_card]  # Player can only have one card in hand
     room.last_drawn_card = drawn_card
+    room.last_card_player = player  # Track who drew this card (for notification visibility)
     room.drawn_cards_order.append(drawn_card)  # Track order for trump determination
     
     logger.info(f"handle_draw_card: Player {player.username} now has in hand: {[(c.rank, c.suit) for c in player.hand]}")
@@ -435,7 +436,6 @@ async def handle_draw_card(room: GameRoom, player: Player):
     # Check if this was the last card - determine trump (but don't reveal yet)
     if not room.deck:
         room.determine_trump_suit()
-        room.last_card_player = player
     
     return {"success": True, "drawn_card": drawn_card.to_dict()}
 
@@ -493,6 +493,10 @@ async def handle_place_card(room: GameRoom, player: Player, message: dict):
         target_player.visible_stack.append(card_to_place)
         player.hand.remove(card_to_place)
         
+        # Clear last drawn card (card has been placed)
+        room.last_drawn_card = None
+        room.last_card_player = None
+        
         # Check if deck is empty - transition to donation phase
         if not room.deck:
             await transition_to_donation_phase(room)
@@ -510,6 +514,10 @@ async def handle_place_card(room: GameRoom, player: Player, message: dict):
             # Turn continues when seniority rule applies on your own stack
             player.visible_stack.append(card_to_place)
             player.hand.remove(card_to_place)
+            
+            # Clear last drawn card (card has been placed)
+            room.last_drawn_card = None
+            room.last_card_player = None
             
             # Check if deck is empty after placing - transition to donation phase
             if not room.deck:
@@ -535,6 +543,11 @@ async def handle_place_card(room: GameRoom, player: Player, message: dict):
             # Turn ends automatically when placing on own stack and no seniority rule
             player.visible_stack.append(card_to_place)
             player.hand.remove(card_to_place)
+            
+            # Clear last drawn card (card has been placed)
+            room.last_drawn_card = None
+            room.last_card_player = None
+            
             await end_player_turn(room, player)
             return
 
@@ -683,6 +696,11 @@ async def handle_play_card(room: GameRoom, player: Player, message: dict):
         # Check if player should pick hidden cards or win
         await check_player_status(room, player)
         
+        # Check if game ended (phase changed to WAITING)
+        if room.phase == GamePhase.WAITING:
+            # Game is over, don't advance turn
+            return
+        
         # Move to next player
         room.current_player_index = (room.current_player_index + 1) % len(room.players)
         # Skip players who are out
@@ -713,10 +731,16 @@ async def handle_play_card(room: GameRoom, player: Player, message: dict):
     
     if len(room.battle_pile) >= len(active_players):
         logger.info(f"Battle pile discarded ({len(room.battle_pile)} cards)")
+        # Move cards to discarded pile
+        if not hasattr(room, 'discarded_cards'):
+            room.discarded_cards = []
+        room.discarded_cards.extend(room.battle_pile)
         room.battle_pile = []
         
-        # Check player status after discard
-        await check_player_status(room, player)
+        # Check ALL active players' status after discard (for hidden cards pickup)
+        # This is important in 2-player scenarios where both may have played their last card
+        for active_player in active_players:
+            await check_player_status(room, active_player)
         
         # Same player continues (starts new pile)
         await send_game_state(room)
@@ -724,6 +748,11 @@ async def handle_play_card(room: GameRoom, player: Player, message: dict):
     
     # Pile not full yet, move to next player
     await check_player_status(room, player)
+    
+    # Check if game ended (phase changed to WAITING)
+    if room.phase == GamePhase.WAITING:
+        # Game is over, don't advance turn
+        return
     
     room.current_player_index = (room.current_player_index + 1) % len(room.players)
     # Skip players who are out
@@ -805,20 +834,12 @@ async def check_player_status(room: GameRoom, player: Player):
         # Battle pile must be empty for a new pile to have started
         new_pile_started = len(room.battle_pile) == 0
         
+        # CRITICAL: Player can only win when their last played card has been DISCARDED (pile is empty)
+        # If pile is not empty, player must wait for pile to resolve before winning
+        # This prevents marking player OUT too early when they start a pile with their last card
         if new_pile_started:
-            # No cards in hand and new battle pile started
-            if len(player.hidden_cards) > 0 and not player.has_picked_hidden_cards:
-                # Pick up hidden cards (stashed cards from phase 1)
-                player.hand.extend(player.hidden_cards)
-                player.hidden_cards = []
-                player.has_picked_hidden_cards = True
-                logger.info(f"{player.username} picked up {len(player.hand)} hidden cards")
-                
-                await manager.send_personal_message(
-                    json.dumps({"type": "notification", "message": "You picked up your stashed cards!"}),
-                    player.id
-                )
-            elif len(player.hidden_cards) == 0 and player.has_picked_hidden_cards:
+            # First check if player has won (no cards in hand, no hidden cards, pile is empty)
+            if len(player.hidden_cards) == 0 and player.has_picked_hidden_cards:
                 # Player has won! (no cards in hand, no hidden cards, and already picked up hidden cards)
                 player.is_out = True
                 logger.info(f"{player.username} has won!")
@@ -860,6 +881,17 @@ async def check_player_status(room: GameRoom, player: Player):
                         room.id,
                         json.dumps({"type": "notification", "message": f"Game ended! {loser.username} lost and will get +1 hidden card next round. Click Ready to play again!"})
                     )
+            elif len(player.hidden_cards) > 0 and not player.has_picked_hidden_cards:
+                # Pick up hidden cards (stashed cards from phase 1) only when new pile started
+                player.hand.extend(player.hidden_cards)
+                player.hidden_cards = []
+                player.has_picked_hidden_cards = True
+                logger.info(f"{player.username} picked up {len(player.hand)} hidden cards")
+                
+                await manager.send_personal_message(
+                    json.dumps({"type": "notification", "message": "You picked up your stashed cards!"}),
+                    player.id
+                )
 
 async def handle_beat_card(room: GameRoom, player: Player, message: dict):
     """Alias for handle_play_card for backward compatibility"""
@@ -877,12 +909,14 @@ async def transition_to_donation_phase(room: GameRoom):
         return
     
     room.phase = GamePhase.DONATION
+    logger.info(f"Starting donation phase. Players needing cards: {[p.username for p in players_needing_donations]}")
     
     # Move all visible_stack cards to hand for all players (so they can donate everything)
     for player in room.players:
         if player.visible_stack:
             player.hand.extend(player.visible_stack)
             player.visible_stack = []
+        logger.info(f"{player.username}: {len(player.hand)} cards in hand, bad_card_counter={player.bad_card_counter}")
     
     # Track donations: {recipient_id: {donor_id: num_cards_donated}}
     room.donation_tracker = {}
@@ -897,47 +931,40 @@ async def transition_to_donation_phase(room: GameRoom):
         player.has_donated = False
         player.pending_donations = {}
     
-    # Start with first player
+    # Start with first player (ALL players donate, even recipients donate to each other)
     room.current_player_index = 0
+    
+    first_donor = room.players[room.current_player_index]
+    logger.info(f"First donor: {first_donor.username} (index {room.current_player_index})")
     
     await send_game_state(room)
 
 async def advance_donation_turn(room: GameRoom):
     """Advance to next player in donation phase or transition to phase 2 if complete"""
     # Check if donation phase is complete
-    # Each recipient should have received bad_card_counter cards from each other player
-    donation_complete = True
-    for recipient_id, donors in room.donation_tracker.items():
-        recipient = room.get_player_by_id(recipient_id)
-        if not recipient:
-            continue
-        
-        needed_per_donor = recipient.bad_card_counter
-        for donor_id in donors:
-            if donors[donor_id] < needed_per_donor:
-                donation_complete = False
-                break
-        
-        if not donation_complete:
-            break
+    # Donations complete when all players have finished donating (marked as has_donated)
+    # A player is marked has_donated when they either:
+    # 1. Donated required amount to all recipients
+    # 2. Ran out of cards (handled in handle_donate_cards when hand is empty)
     
-    if donation_complete:
-        logger.info("All donations complete, transitioning to phase 2")
+    all_players_donated = all(player.has_donated for player in room.players)
+    
+    if all_players_donated:
+        logger.info("All players have completed donations, transitioning to phase 2")
         await transition_to_phase_two(room)
     else:
-        # Move to next player, skipping players who need donations (they don't donate)
-        start_index = room.current_player_index
+        # Move to next player (ALL players donate, including recipients)
         room.current_player_index = (room.current_player_index + 1) % len(room.players)
         
-        # Skip players who have bad_card_counter > 0 (they are recipients, not donors)
+        # Skip players who already completed donations
         attempts = 0
-        while room.players[room.current_player_index].bad_card_counter > 0 and attempts < len(room.players):
+        while room.players[room.current_player_index].has_donated and attempts < len(room.players):
             room.current_player_index = (room.current_player_index + 1) % len(room.players)
             attempts += 1
         
-        # If we cycled through everyone and they all need donations, something is wrong
+        # Safety: if everyone has donated, transition to phase 2
         if attempts >= len(room.players):
-            logger.error("All players need donations - no one can donate! Transitioning to phase 2")
+            logger.info("All players marked as donated, transitioning to phase 2")
             await transition_to_phase_two(room)
             return
         
@@ -960,16 +987,14 @@ async def handle_donate_cards(room: GameRoom, player: Player, message: dict):
     donations = message.get("donations", {})  # {target_player_id: [card_indices]}
     logger.info(f"Player {player.username} donating: {donations}")
     
-    # Check if this player needs to donate at all
-    # (if they have no hand cards, or no one needs donations, skip)
-    players_needing_donations = [p for p in room.players if p.bad_card_counter > 0 and p.id != player.id]
-    if not players_needing_donations or not player.hand:
-        # Mark as donated and move to next player
+    # Check if this player has any cards to donate
+    if len(player.hand) == 0:
+        # No cards to donate - mark as done and advance
         player.has_donated = True
         await advance_donation_turn(room)
         return
     
-    # Process each donation
+    # Process each donation (should be only one recipient per call now)
     for target_player_id, card_indices in donations.items():
         target_player = room.get_player_by_id(target_player_id)
         
@@ -1011,11 +1036,30 @@ async def handle_donate_cards(room: GameRoom, player: Player, message: dict):
                 
                 logger.info(f"Donated {card.rank} of {card.suit} from {player.username} to {target_player.username}")
     
-    # Mark player as having donated
-    player.has_donated = True
+    # Check if this donor has completed all required donations
+    # A donor is done when they have donated to ALL recipients who need cards
+    all_donations_complete = True
+    for recipient_id, donors in room.donation_tracker.items():
+        recipient = room.get_player_by_id(recipient_id)
+        if not recipient or recipient.id == player.id:
+            continue
+        
+        needed = recipient.bad_card_counter
+        already_donated = donors.get(player.id, 0)
+        
+        if already_donated < needed:
+            all_donations_complete = False
+            break
     
-    # Advance to next player or complete donation phase
-    await advance_donation_turn(room)
+    if all_donations_complete:
+        # This donor has completed all donations
+        player.has_donated = True
+        # Advance to next donor or complete donation phase
+        await advance_donation_turn(room)
+    else:
+        # This donor still needs to donate to other recipients
+        # Send updated game state so they see the updated hand and next recipient
+        await send_game_state(room)
 
 async def transition_to_phase_two(room: GameRoom):
     """Transition to phase 2 (battle phase)"""
@@ -1062,6 +1106,12 @@ async def transition_to_phase_two(room: GameRoom):
 
 async def send_game_state(room: GameRoom):
     for player in room.players:
+        # Determine if this player should see the last drawn card
+        # Show to all players EXCEPT the one who drew it (they already see it in their hand)
+        show_last_drawn = False
+        if room.last_drawn_card and room.last_card_player:
+            show_last_drawn = (player.id != room.last_card_player.id)
+        
         game_state = {
             "type": "game_state",
             "phase": room.phase.value,
@@ -1070,8 +1120,11 @@ async def send_game_state(room: GameRoom):
             "trump_suit": room.trump_suit,
             "deck_size": len(room.deck),
             "battle_pile": [card.to_dict() for card in room.battle_pile],
+            "discarded_count": len(getattr(room, 'discarded_cards', [])),
+            "last_drawn_card": room.last_drawn_card.to_dict() if show_last_drawn else None,
             "player_id": player.id,
-            "players_needing_donations": [p.id for p in room.players if p.bad_card_counter > 0]  # Add this
+            "players_needing_donations": [p.id for p in room.players if p.bad_card_counter > 0],
+            "donation_tracker": getattr(room, 'donation_tracker', {})  # Include donation progress
         }
         
         # Add player info
