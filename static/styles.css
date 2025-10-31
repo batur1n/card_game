@@ -461,10 +461,12 @@ body {
     display: flex;
     justify-content: center;
     margin: 10px 0;
-    min-height: 120px;
-    min-width: 120px;
+    min-height: 160px;
+    min-width: 160px;
     position: relative;
     z-index: 2;
+    /* Add padding to create larger drop zone */
+    padding: 20px;
 }
 
 .visible-stack .card {
@@ -556,6 +558,25 @@ body {
 .drop-zone.invalid-drop {
     border-color: #e74c3c;
     background: rgba(231, 76, 60, 0.2);
+}
+
+/* Apply same feedback to visible-stack during drag */
+.visible-stack.drag-over {
+    background: rgba(243, 156, 18, 0.2);
+    border-radius: 10px;
+    outline: 2px dashed #f39c12;
+}
+
+.visible-stack.valid-drop {
+    background: rgba(39, 174, 96, 0.2);
+    border-radius: 10px;
+    outline: 2px dashed #27ae60;
+}
+
+.visible-stack.invalid-drop {
+    background: rgba(231, 76, 60, 0.2);
+    border-radius: 10px;
+    outline: 2px dashed #e74c3c;
 }
 
 /* Phase indicators */
