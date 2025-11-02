@@ -10,21 +10,21 @@
     <div class="container">
         <!-- Welcome Screen -->
         <div id="welcomeScreen" class="welcome-screen">
-            <h1>Multiplayer Card Game v0.5.9</h1>
+            <h1>🤡 v0.6.4</h1>
             
             <div class="input-group">
-                <input type="text" id="usernameInput" placeholder="Enter your username" />
+                <input type="text" id="usernameInput" placeholder="Введіть ваше ім'я" />
             </div>
             
             <div class="input-group">
-                <button class="btn btn-primary" onclick="createRoom()">Create Room</button>
-                <button class="btn btn-secondary" onclick="refreshRooms()">Refresh Rooms</button>
+                <button class="btn btn-primary" onclick="createRoom()">Створити кімнату</button>
+                <button class="btn btn-secondary" onclick="refreshRooms()">Оновити кімнати</button>
             </div>
             
             <div id="roomsList" class="rooms-list">
-                <h3>Available Rooms</h3>
+                <h3>Кімнати</h3>
                 <div id="roomsContainer">
-                    <p>No rooms available</p>
+                    <p>Немає доступних кімнат</p>
                 </div>
             </div>
         </div>
@@ -34,23 +34,23 @@
             <div class="game-header">
                 <div class="game-info">
                     <span id="roomId"></span>
-                    <span id="gamePhase">Phase: Waiting</span>
+                    <span id="gamePhase">Фаза: Очікування</span>
                     <span id="currentPlayer"></span>
                 </div>
-                <button class="btn btn-primary" id="readyButton" onclick="toggleReady()">Ready</button>
+                <button class="btn btn-primary" id="readyButton" onclick="toggleReady()">Готов</button>
             </div>
 
             <div class="phase-indicator">
-                <h3>Phase</h3>
-                <p id="phaseText">Waiting</p>
+                <h3>Фаза</h3>
+                <p id="phaseText">Очікування</p>
                 <div id="trumpInfo" class="hidden">
-                    <h4>Trump</h4>
+                    <h4>Козир</h4>
                     <p id="trumpSuit"></p>
                 </div>
             </div>
 
             <div class="players-sidebar">
-                <h3>Players</h3>
+                <h3>Ігроки</h3>
                 <div id="playersContainer"></div>
             </div>
 
@@ -59,16 +59,16 @@
                 
                 <div class="center-area">
                     <div class="deck-area" id="deckArea" onclick="drawCard()">
-                        <span class="deck-label">Deck</span>
+                        <span class="deck-label">Колода</span>
                         <div id="trumpIndicator" class="trump-indicator hidden"></div>
                     </div>
                     
                     <div class="battle-pile" id="battlePile">
-                        <span>Battle Pile</span>
+                        <span>Бойова купа</span>
                     </div>
                     
                     <div class="discarded-pile" id="discardedPile">
-                        <span class="pile-label">Discarded</span>
+                        <span class="pile-label">Отбой</span>
                     </div>
                 </div>
 
@@ -77,8 +77,8 @@
 
             <!-- Game Actions -->
             <div id="gameActions" class="game-actions hidden">
-                <button class="btn btn-primary" onclick="drawCard()" id="drawButton">Draw Card</button>
-                <button class="btn" onclick="endTurn()" id="endTurnButton">End Turn</button>
+                <button class="btn btn-primary" onclick="drawCard()" id="drawButton">Витягти карту</button>
+                <button class="btn" onclick="endTurn()" id="endTurnButton">Закінчити хід</button>
             </div>
         </div>
     </div>
@@ -90,8 +90,21 @@
         <div class="modal-content">
             <div class="modal-body">
                 <div class="loading-spinner"></div>
-                <h3 id="waitingModalTitle">Please Wait</h3>
-                <p id="waitingModalMessage">Please wait while other players complete their actions...</p>
+                <h3 id="waitingModalTitle">Будь ласка, зачекайте</h3>
+                <p id="waitingModalMessage">Будь ласка, зачекайте, поки інші гравці завершать свої дії...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game End Modal -->
+    <div id="gameEndModal" class="modal hidden">
+        <div class="modal-content game-end-modal">
+            <div class="modal-body">
+                <h2 id="gameEndTitle">Гра закінчена!</h2>
+                <div id="gameEndEmoji" class="game-end-emoji">🤡</div>
+                <h3 id="gameEndLoser"></h3>
+                <p id="gameEndMessage"></p>
+                <button class="btn btn-primary" onclick="closeGameEndModal()">OK</button>
             </div>
         </div>
     </div>
