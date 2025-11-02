@@ -793,6 +793,56 @@ body {
     100% { transform: rotate(360deg); }
 }
 
+/* Game End Modal */
+.game-end-modal {
+    background: linear-gradient(135deg, #5a272d, #7c4a59) !important;
+    border: 3px solid #ff6b6b;
+    animation: shake 0.5s;
+}
+
+.game-end-emoji {
+    font-size: 6rem;
+    margin: 20px 0;
+    animation: bounce 1s infinite;
+}
+
+.game-end-modal h2 {
+    color: #ffcc00;
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.game-end-modal h3 {
+    color: #ff6b6b;
+    font-size: 2rem;
+    margin: 20px 0;
+    text-transform: uppercase;
+    font-weight: bold;
+}
+
+.game-end-modal p {
+    color: white;
+    font-size: 1.2rem;
+    margin-bottom: 30px;
+}
+
+.game-end-modal .btn {
+    padding: 15px 40px;
+    font-size: 1.2rem;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+    20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-20px); }
+}
+
 @media (max-width: 768px) {
     .players-sidebar {
         position: relative;
