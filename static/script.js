@@ -79,7 +79,7 @@ function joinRoom(roomId) {
     ws.onopen = function() {
         document.getElementById('welcomeScreen').style.display = 'none';
         document.getElementById('gameScreen').style.display = 'block';
-        document.getElementById('roomId').textContent = `Room: ${roomId}`;
+        document.getElementById('roomId').textContent = `Комната: ${roomId}`;
         showNotification('Connected to room!', 'success');
     };
     
@@ -102,6 +102,8 @@ function joinRoom(roomId) {
 }
 
 // Game state management
+let gameJustEnded = false;
+
 function handleGameStateUpdate(data) {
     if (data.type === 'game_state') {
         const previousPhase = gameState?.phase;
@@ -109,8 +111,9 @@ function handleGameStateUpdate(data) {
         
         // Check if game just ended (transition from phase_two to waiting)
         if (previousPhase === 'phase_two' && gameState.phase === 'waiting') {
-            // Game just ended, will show special modal when notification arrives
-            console.log('Game ended - transitioning from phase_two to waiting');
+            // Game just ended, set flag to show modal when notification arrives
+            gameJustEnded = true;
+            console.log('Game ended - transitioning from phase_two to waiting, set flag');
         }
         
         updateUI();
@@ -119,17 +122,24 @@ function handleGameStateUpdate(data) {
     } else if (data.type === 'notification') {
         // Check if this is a game-end notification
         const message = data.message;
-        console.log('Received notification:', message);
+        console.log('Received notification:', message, 'gameJustEnded flag:', gameJustEnded);
         
-        if (message.includes('Game ended!') && message.includes('lost')) {
-            // Extract loser name from message like "Game ended! PlayerName lost and will get +1 hidden card next round..."
-            const match = message.match(/Game ended! (.+?) lost/);
+        // More robust detection: check for game end in multiple ways
+        const isGameEndNotification = (
+            (message.includes('Game ended!') && message.includes('lost')) ||
+            (gameJustEnded && message.includes('lost') && message.includes('hidden card'))
+        );
+        
+        if (isGameEndNotification) {
+            // Extract loser name from message
+            const match = message.match(/(?:Game ended! )?(.+?) lost/);
             console.log('Game end notification detected, regex match:', match);
             
             if (match) {
                 const loserName = match[1];
                 console.log('Showing game end modal for loser:', loserName);
                 showGameEndModal(loserName);
+                gameJustEnded = false; // Reset flag
                 // Don't show the regular notification for game end
                 return;
             }
@@ -173,7 +183,14 @@ function updateUI() {
 }
 
 function cleanupPhase2UI() {
-    // Remove Phase 2 UI elements
+    // Hide Phase 2 actions container
+    const phase2Container = document.getElementById('phase2ActionsContainer');
+    if (phase2Container) {
+        phase2Container.classList.add('hidden');
+        phase2Container.innerHTML = '';
+    }
+    
+    // Remove Phase 2 UI elements from old location
     const gameActions = document.getElementById('gameActions');
     if (gameActions) {
         const existingPhase2 = gameActions.querySelector('.phase2-actions');
@@ -204,11 +221,13 @@ function cleanupPhase2UI() {
 
 function updateGameActions() {
     const gameActions = document.getElementById('gameActions');
-    const drawButton = document.getElementById('drawButton');
-    const endTurnButton = document.getElementById('endTurnButton');
+    const drawButtonCenter = document.getElementById('drawButtonCenter');
+    const endTurnButtonCenter = document.getElementById('endTurnButtonCenter');
     
     if (gameState.phase !== 'phase_one') {
         gameActions.classList.add('hidden');
+        if (drawButtonCenter) drawButtonCenter.style.display = 'none';
+        if (endTurnButtonCenter) endTurnButtonCenter.style.display = 'none';
         return;
     }
 
@@ -217,10 +236,13 @@ function updateGameActions() {
     
     if (!isMyTurn) {
         gameActions.classList.add('hidden');
+        if (drawButtonCenter) drawButtonCenter.style.display = 'none';
+        if (endTurnButtonCenter) endTurnButtonCenter.style.display = 'none';
         return;
     }
 
-    gameActions.classList.remove('hidden');
+    // Hide the bottom game actions bar in phase 1
+    gameActions.classList.add('hidden');
     
     const myPlayer = gameState.players?.find(p => p.id === gameState.player_id);
     if (!myPlayer) return;
@@ -229,18 +251,22 @@ function updateGameActions() {
 
     // Show draw button if player has no cards in hand and deck exists
     const canDraw = gameState.deck_size > 0 && !hasHandCard;
-    drawButton.style.display = canDraw ? 'block' : 'none';
+    if (drawButtonCenter) {
+        drawButtonCenter.style.display = canDraw ? 'inline-block' : 'none';
+    }
 
     // Change end turn to "Place on My Stack" when player has a card in hand
-    if (hasHandCard) {
-        endTurnButton.textContent = 'Положить собі';
-        endTurnButton.onclick = placeCardOnOwnStack;
-        endTurnButton.style.display = 'block';
-    } else {
-        endTurnButton.textContent = 'Закончить ход';
-        endTurnButton.onclick = endTurn;
-        // Only show end turn if no actions are required
-        endTurnButton.style.display = !canDraw ? 'block' : 'none';
+    if (endTurnButtonCenter) {
+        if (hasHandCard) {
+            endTurnButtonCenter.textContent = 'Положить собі';
+            endTurnButtonCenter.onclick = placeCardOnOwnStack;
+            endTurnButtonCenter.style.display = 'inline-block';
+        } else {
+            endTurnButtonCenter.textContent = 'Закінчити хід';
+            endTurnButtonCenter.onclick = endTurn;
+            // Only show end turn if no actions are required
+            endTurnButtonCenter.style.display = !canDraw ? 'inline-block' : 'none';
+        }
     }
 }
 
@@ -312,7 +338,7 @@ function updatePhaseDisplay() {
         if (trumpSuit) trumpSuit.textContent = getSuitSymbol(gameState.trump_suit);
         if (trumpIndicator) {
             trumpIndicator.classList.remove('hidden');
-            trumpIndicator.textContent = `Trump: ${getSuitSymbol(gameState.trump_suit)}`;
+            trumpIndicator.textContent = `Козирь: ${getSuitSymbol(gameState.trump_suit)}`;
         }
     } else {
         if (trumpInfo) trumpInfo.classList.add('hidden');
@@ -323,7 +349,7 @@ function updatePhaseDisplay() {
     if (gameState.players && gameState.current_player_index !== undefined && currentPlayerElement) {
         const currentPlayer = gameState.players[gameState.current_player_index];
         currentPlayerElement.textContent = 
-            `Current: ${currentPlayer ? currentPlayer.username : 'None'}`;
+            `Ходить: ${currentPlayer ? currentPlayer.username : 'None'}`;
     }
 
     // Update deck area visibility and state
@@ -402,9 +428,9 @@ function updatePlayersDisplay() {
         
         return `
             <div class="${classes}">
-                <span>${player.username} ${hasPickedHidden} ${player.id === gameState.player_id ? '(You)' : ''}</span>
+                <span>${player.username} ${hasPickedHidden} ${player.id === gameState.player_id ? '(Ти)' : ''}</span>
                 <div>
-                    <span>Stack: ${player.visible_stack ? player.visible_stack.length : 0}</span>
+                    <span>Стопка: ${player.visible_stack ? player.visible_stack.length : 0}</span>
                     ${hiddenCount > 0 && !player.has_picked_hidden_cards ? `<br><small style="color: #d01632ff;">Прикуп: ${hiddenCount}</small>` : ''}
                     ${player.bad_card_counter > 0 ? `<br><small style="color: #e74c3c;">Погані: ${player.bad_card_counter}</small>` : ''}
                 </div>
@@ -454,7 +480,7 @@ function updatePlayersDisplay() {
                 </div>
                 <div class="player-info">
                     <h4>${player.username} ${hasPickedHidden} ${isMe ? '(You)' : ''} ${isCurrentPlayer ? '👈' : ''}</h4>
-                    <p>Стопка: ${player.visible_stack ? player.visible_stack.length : 0}${player.bad_card_counter > 0 ? ` | Bad: ${player.bad_card_counter}` : ''}</p>
+                    ${player.bad_card_counter > 0 ? `<p>Bad: ${player.bad_card_counter}</p>` : ''}
                 </div>
             </div>
         `;
@@ -597,9 +623,8 @@ function renderHiddenCards(hiddenCards) {
     }
 
     return hiddenCards.map((card, index) => 
-        `<div class="card hidden" style="z-index: ${index}; left: ${index * 5}px; top: ${index * 5}px;" title="Hidden card">
-            <div class="rank">?</div>
-            <div class="suit">?</div>
+        `<div class="hidden-card-back" style="position: absolute; z-index: ${index}; left: ${index * 8}px; top: ${index * 3}px;" title="Hidden/Stashed card">
+            <div class="card-back-pattern"></div>
         </div>`
     ).join('');
 }
@@ -641,7 +666,9 @@ function updateGameBoard() {
                 let discardedHTML = '<span class="pile-label">Discarded</span>';
                 for (let i = 0; i < cardsToShow; i++) {
                     const offset = (i / cardsToShow) * 6;
-                    discardedHTML += `<div class="discarded-card-back" style="top: ${10 + offset}px; left: ${10 + offset}px; z-index: ${i};"></div>`;
+                    discardedHTML += `<div class="discarded-card-back" style="top: ${10 + offset}px; left: ${10 + offset}px; z-index: ${i};">
+                        <div class="card-back-pattern"></div>
+                    </div>`;
                 }
                 discardedPile.innerHTML = discardedHTML;
             } else {
@@ -689,17 +716,14 @@ function updateDeckDisplay() {
     for (let i = 0; i < cardsToShow; i++) {
         const offset = (i / cardsToShow) * stackDepth;
         deckHTML += `
-            <div class="deck-card" style="
+            <div class="deck-card-back" style="
                 position: absolute;
                 top: ${10 + offset}px;
                 left: ${10 + offset}px;
                 z-index: ${i};
-                width: 60px;
-                height: 80px;
-                background: #8B4513;
-                border: 1px solid #654321;
-                border-radius: 6px;
-            "></div>`;
+            ">
+                <div class="card-back-pattern"></div>
+            </div>`;
     }
     
     // Add trump indicator if it exists
@@ -708,24 +732,26 @@ function updateDeckDisplay() {
         deckHTML += trumpIndicator.outerHTML;
     }
     
-    // Add count indicator (show in all phases when deck has cards)
-    deckHTML += `<span class="deck-count" style="
-        position: absolute;
-        bottom: 5px;
-        right: 5px;
-        background: rgba(0,0,0,0.8);
-        color: white;
-        padding: 2px 6px;
-        border-radius: 10px;
-        font-size: 0.8rem;
-        z-index: 100;
-    ">${deckSize}</span>`;
+    // Add count indicator only in phase_two
+    if (gameState.phase === 'phase_two') {
+        deckHTML += `<span class="deck-count" style="
+            position: absolute;
+            bottom: 5px;
+            right: 5px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 0.8rem;
+            z-index: 100;
+        ">${deckSize}</span>`;
+    }
     
     deckArea.innerHTML = deckHTML;
 }
 
 function updateLastDrawnCard() {
-    // Show last drawn card for all players to see in phase_one
+    // Show last drawn card for ALL players to see in phase_one
     if (gameState.phase !== 'phase_one' || !gameState.last_drawn_card) {
         // Hide or remove last drawn card display
         const existingDisplay = document.getElementById('lastDrawnCardDisplay');
@@ -736,47 +762,36 @@ function updateLastDrawnCard() {
     }
     
     const card = gameState.last_drawn_card;
-    const centerArea = document.querySelector('.center-area');
+    const deckArea = document.getElementById('deckArea');
     
-    if (!centerArea) return;
+    if (!deckArea) return;
+    
+    // Check if current player is the one who can drag this card
+    const isMyTurn = gameState.players && 
+        gameState.players[gameState.current_player_index]?.id === gameState.player_id;
     
     // Check if display already exists
     let display = document.getElementById('lastDrawnCardDisplay');
     if (!display) {
         display = document.createElement('div');
         display.id = 'lastDrawnCardDisplay';
-        display.style.cssText = `
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            z-index: 150;
-            text-align: center;
-        `;
-        centerArea.appendChild(display);
+        display.className = 'drawn-card-display';
+        deckArea.parentElement.insertBefore(display, deckArea.nextSibling);
     }
+    
+    // Make card draggable only for current player
+    const draggableAttr = isMyTurn ? 'draggable="true"' : '';
+    const dataAttrs = isMyTurn ? `data-card='${JSON.stringify(card)}' data-source="hand" data-index="0"` : '';
     
     // Update display with current drawn card
     display.innerHTML = `
-        <div style="
-            background: rgba(0,0,0,0.9);
-            padding: 15px;
-            border-radius: 10px;
-            border: 2px solid #f39c12;
-        ">
-            <div style="color: white; font-weight: bold; margin-bottom: 10px;">Last Drawn Card</div>
-            <div class="card ${card.suit}" style="
-                width: 80px;
-                height: 110px;
-                margin: 0 auto;
-                position: relative;
-            ">
-                <div class="rank rank-top-left">${getRankSymbol(card.rank)}</div>
-                <div class="suit suit-top-left">${getSuitSymbol(card.suit)}</div>
-                <div class="rank rank-bottom-right">${getRankSymbol(card.rank)}</div>
-                <div class="suit suit-bottom-right">${getSuitSymbol(card.suit)}</div>
-            </div>
+        <div class="card ${card.suit}" ${draggableAttr} ${dataAttrs}>
+            <div class="rank rank-top-left">${getRankSymbol(card.rank)}</div>
+            <div class="suit suit-top-left">${getSuitSymbol(card.suit)}</div>
+            <div class="rank rank-bottom-right">${getRankSymbol(card.rank)}</div>
+            <div class="suit suit-bottom-right">${getSuitSymbol(card.suit)}</div>
         </div>
+        <div class="drawn-card-label">Last Drawn</div>
     `;
 }
 
@@ -789,18 +804,44 @@ function updateHand() {
     
     if (!myPlayer || !myPlayer.hand) {
         hand.innerHTML = '';
+        // Also clear current player's drawn card display if exists
+        const myDrawnCardDisplay = document.getElementById('myDrawnCardDisplay');
+        if (myDrawnCardDisplay) {
+            myDrawnCardDisplay.remove();
+        }
         return;
     }
 
-    hand.innerHTML = myPlayer.hand.map((card, index) => {
-        console.log(`updateHand - rendering card ${index}:`, card);
-        return `<div class="card ${card.suit}" draggable="true" data-card='${JSON.stringify(card)}' data-source="hand" data-index="${index}">
-            <div class="rank rank-top-left">${getRankSymbol(card.rank)}</div>
-            <div class="suit suit-top-left">${getSuitSymbol(card.suit)}</div>
-            <div class="rank rank-bottom-right">${getRankSymbol(card.rank)}</div>
-            <div class="suit suit-bottom-right">${getSuitSymbol(card.suit)}</div>
-        </div>`;
-    }).join('');
+    // In phase_one, hide the hand area completely
+    if (gameState.phase === 'phase_one') {
+        hand.style.display = 'none'; // Hide hand area in phase 1
+        hand.innerHTML = '';
+        
+        // Remove "Your Card" display if it exists
+        const myDrawnCardDisplay = document.getElementById('myDrawnCardDisplay');
+        if (myDrawnCardDisplay) {
+            myDrawnCardDisplay.remove();
+        }
+    } else {
+        // Normal behavior for other phases - show hand area
+        hand.style.display = 'flex'; // Show hand area in other phases
+        
+        hand.innerHTML = myPlayer.hand.map((card, index) => {
+            console.log(`updateHand - rendering card ${index}:`, card);
+            return `<div class="card ${card.suit}" draggable="true" data-card='${JSON.stringify(card)}' data-source="hand" data-index="${index}">
+                <div class="rank rank-top-left">${getRankSymbol(card.rank)}</div>
+                <div class="suit suit-top-left">${getSuitSymbol(card.suit)}</div>
+                <div class="rank rank-bottom-right">${getRankSymbol(card.rank)}</div>
+                <div class="suit suit-bottom-right">${getSuitSymbol(card.suit)}</div>
+            </div>`;
+        }).join('');
+        
+        // Remove my drawn card display if it exists
+        const myDrawnCardDisplay = document.getElementById('myDrawnCardDisplay');
+        if (myDrawnCardDisplay) {
+            myDrawnCardDisplay.remove();
+        }
+    }
 }
 
 // Drag and drop handlers
@@ -1387,7 +1428,7 @@ function updateUI() {
 
 function updatePhase2UI() {
     const battlePile = document.getElementById('battlePile');
-    const gameActions = document.getElementById('gameActions');
+    const phase2Container = document.getElementById('phase2ActionsContainer');
     
     if (!battlePile) {
         console.warn('updatePhase2UI: battlePile element not found');
@@ -1415,49 +1456,37 @@ function updatePhase2UI() {
         battlePile.removeAttribute('data-target');
     }
     
-    // Show phase 2 actions
-    if (isMyTurn && myPlayer && !myPlayer.is_out && gameActions) {
-        gameActions.classList.remove('hidden');
-        
-        // Hide Phase 1 buttons
-        const drawButton = document.getElementById('drawButton');
-        const endTurnButton = document.getElementById('endTurnButton');
-        if (drawButton) drawButton.style.display = 'none';
-        if (endTurnButton) endTurnButton.style.display = 'none';
-        
-        // Clear any existing Phase 2 content first
-        const existingPhase2 = gameActions.querySelector('.phase2-actions');
-        if (existingPhase2) {
-            existingPhase2.remove();
-        }
-        
-        // Create Phase 2 actions container
-        const phase2Container = document.createElement('div');
-        phase2Container.className = 'phase2-actions';
-        
-        // Show "Take Pile" button if battle pile exists
-        if (gameState.battle_pile && gameState.battle_pile.length > 0) {
-            const takePileBtn = document.createElement('button');
-            takePileBtn.className = 'btn btn-secondary';
-            takePileBtn.textContent = 'Взять';
-            takePileBtn.onclick = takeBattlePile;
-            phase2Container.appendChild(takePileBtn);
-        }
-        
-        // Show instruction
-        const instruction = document.createElement('p');
-        instruction.style.color = 'white';
-        instruction.style.marginTop = '10px';
-        if (!gameState.battle_pile || gameState.battle_pile.length === 0) {
-            instruction.textContent = 'Положи карту, щоб почати битву';
+    // Show phase 2 actions container under hand
+    if (phase2Container) {
+        if (isMyTurn && myPlayer && !myPlayer.is_out) {
+            phase2Container.classList.remove('hidden');
+            
+            // Clear any existing content
+            phase2Container.innerHTML = '';
+            
+            // Show "Take Pile" button if battle pile exists
+            if (gameState.battle_pile && gameState.battle_pile.length > 0) {
+                const takePileBtn = document.createElement('button');
+                takePileBtn.className = 'btn btn-secondary';
+                takePileBtn.textContent = 'Взять купу';
+                takePileBtn.onclick = takeBattlePile;
+                phase2Container.appendChild(takePileBtn);
+            }
+            
+            // Show instruction
+            const instruction = document.createElement('p');
+            instruction.style.color = 'white';
+            instruction.style.marginTop = '5px';
+            instruction.style.marginBottom = '0';
+            if (!gameState.battle_pile || gameState.battle_pile.length === 0) {
+                instruction.textContent = 'Положи карту, щоб почати битву';
+            } else {
+                instruction.textContent = 'Перетягніть карту, щоб побити верхню карту';
+            }
+            phase2Container.appendChild(instruction);
         } else {
-            instruction.textContent = 'Перетягніть карту, щоб побити верхню карту, або візьміть купу';
+            phase2Container.classList.add('hidden');
         }
-        phase2Container.appendChild(instruction);
-        
-        gameActions.appendChild(phase2Container);
-    } else if (gameActions) {
-        gameActions.classList.add('hidden');
     }
 }
 
