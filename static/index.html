@@ -10,7 +10,7 @@
     <div class="container">
         <!-- Welcome Screen -->
         <div id="welcomeScreen" class="welcome-screen">
-            <h1>🤡 v0.6.4</h1>
+            <h1>🤡 v0.7.1</h1>
             
             <div class="input-group">
                 <input type="text" id="usernameInput" placeholder="Введіть ваше ім'я" />
@@ -58,9 +58,17 @@
                 <div class="players-area" id="playersArea"></div>
                 
                 <div class="center-area">
-                    <div class="deck-area" id="deckArea" onclick="drawCard()">
-                        <span class="deck-label">Колода</span>
-                        <div id="trumpIndicator" class="trump-indicator hidden"></div>
+                    <div class="deck-drawn-container">
+                        <div class="deck-drawn-cards">
+                            <div class="deck-area" id="deckArea" onclick="drawCard()">
+                                <span class="deck-label">Колода</span>
+                                <div id="trumpIndicator" class="trump-indicator hidden"></div>
+                            </div>
+                        </div>
+                        <div class="deck-buttons">
+                            <button class="btn btn-primary btn-compact" onclick="drawCard()" id="drawButtonCenter" style="display: none;">Витягти карту</button>
+                            <button class="btn btn-compact" onclick="endTurn()" id="endTurnButtonCenter" style="display: none;">Закінчити хід</button>
+                        </div>
                     </div>
                     
                     <div class="battle-pile" id="battlePile">
@@ -73,6 +81,9 @@
                 </div>
 
                 <div class="hand" id="playerHand"></div>
+                
+                <!-- Phase 2 Actions (right under hand) -->
+                <div id="phase2ActionsContainer" class="phase2-actions-container hidden"></div>
             </div>
 
             <!-- Game Actions -->
