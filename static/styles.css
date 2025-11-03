@@ -4,11 +4,16 @@
     box-sizing: border-box;
 }
 
+html {
+    scroll-behavior: smooth;
+}
+
 body {
     font-family: 'Arial', sans-serif;
     background: linear-gradient(135deg, #2d5a27, #4a7c59);
     min-height: 100vh;
     color: white;
+    overflow-x: hidden;
 }
 
 .container {
@@ -113,6 +118,8 @@ body {
     padding: 15px;
     background: rgba(0,0,0,0.3);
     border-radius: 10px;
+    position: relative;
+    z-index: 10;
 }
 
 .game-info {
@@ -131,6 +138,7 @@ body {
     padding: 20px;
     max-height: 80vh;
     overflow-y: auto;
+    z-index: 5;
 }
 
 .player-item {
@@ -164,9 +172,50 @@ body {
 .center-area {
     display: flex;
     justify-content: center;
-    align-items: center;
+    align-items: flex-start;
     gap: 30px;
     padding: 20px;
+    flex-wrap: wrap;
+}
+
+.deck-drawn-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+}
+
+.deck-drawn-cards {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+
+.drawn-card-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.drawn-card-label {
+    color: white;
+    font-size: 0.85rem;
+    font-weight: bold;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
+}
+
+.deck-buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.btn-compact {
+    padding: 8px 16px;
+    font-size: 0.9rem;
+    margin: 0;
 }
 
 .deck-area {
@@ -200,6 +249,46 @@ body {
 
 .deck-card {
     box-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+}
+
+.deck-card-back {
+    width: 60px;
+    height: 80px;
+    background: linear-gradient(135deg, #8B4513 0%, #654321 50%, #8B4513 100%);
+    border: 2px solid #654321;
+    border-radius: 6px;
+    box-shadow: 2px 2px 4px rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.deck-card-back::before {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: 
+        repeating-linear-gradient(
+            45deg,
+            transparent,
+            transparent 10px,
+            rgba(139, 69, 19, 0.3) 10px,
+            rgba(139, 69, 19, 0.3) 20px
+        ),
+        repeating-linear-gradient(
+            -45deg,
+            transparent,
+            transparent 10px,
+            rgba(101, 67, 33, 0.3) 10px,
+            rgba(101, 67, 33, 0.3) 20px
+        );
+}
+
+.deck-card-back .card-back-pattern {
+    width: 40px;
+    height: 60px;
 }
 
 .battle-pile {
@@ -252,11 +341,42 @@ body {
 .discarded-card-back {
     width: 60px;
     height: 80px;
-    background: #8B4513;
-    border: 1px solid #654321;
+    background: linear-gradient(135deg, #8B4513 0%, #654321 50%, #8B4513 100%);
+    border: 2px solid #654321;
     border-radius: 6px;
     position: absolute;
-    box-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    box-shadow: 2px 2px 4px rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.discarded-card-back::before {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: 
+        repeating-linear-gradient(
+            45deg,
+            transparent,
+            transparent 10px,
+            rgba(139, 69, 19, 0.3) 10px,
+            rgba(139, 69, 19, 0.3) 20px
+        ),
+        repeating-linear-gradient(
+            -45deg,
+            transparent,
+            transparent 10px,
+            rgba(101, 67, 33, 0.3) 10px,
+            rgba(101, 67, 33, 0.3) 20px
+        );
+}
+
+.discarded-card-back .card-back-pattern {
+    width: 40px;
+    height: 60px;
 }
 
 .trump-indicator {
@@ -354,25 +474,90 @@ body {
     color: #2c3e50 !important;
 }
 
+/* Hidden card backs */
+.hidden-card-back {
+    width: 60px;
+    height: 85px;
+    background: linear-gradient(135deg, #8B4513 0%, #654321 50%, #8B4513 100%);
+    border: 2px solid #654321;
+    border-radius: 6px;
+    box-shadow: 2px 2px 4px rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.hidden-card-back::before {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: 
+        repeating-linear-gradient(
+            45deg,
+            transparent,
+            transparent 10px,
+            rgba(139, 69, 19, 0.3) 10px,
+            rgba(139, 69, 19, 0.3) 20px
+        ),
+        repeating-linear-gradient(
+            -45deg,
+            transparent,
+            transparent 10px,
+            rgba(101, 67, 33, 0.3) 10px,
+            rgba(101, 67, 33, 0.3) 20px
+        );
+}
+
+.card-back-pattern {
+    width: 40px;
+    height: 65px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    position: relative;
+    z-index: 1;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.card-back-pattern::before {
+    content: '🂠';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 1.5rem;
+    opacity: 0.6;
+    color: rgba(255, 215, 0, 0.7);
+}
+
 .hand {
     display: flex;
     justify-content: center;
-    gap: -20px;
     margin-top: 20px;
     padding: 20px;
     background: rgba(0,0,0,0.2);
     border-radius: 15px;
     min-height: 130px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
 }
 
 .hand .card {
-    margin-left: -20px;
+    margin-left: -45px;
     transition: all 0.3s ease;
+    flex-shrink: 0;
+}
+
+.hand .card:first-child {
+    margin-left: 0;
 }
 
 .hand .card:hover {
     margin-left: -10px;
     margin-right: 10px;
+    z-index: 10;
 }
 
 /* Player Areas */
@@ -387,25 +572,32 @@ body {
 .player-area {
     background: rgba(255,255,255,0.1);
     border-radius: 15px;
-    padding: 15px;
-    min-width: 200px;
+    padding: 8px;
+    min-width: 180px;
     text-align: center;
     display: flex;
     flex-direction: column;
+    gap: 3px;
 }
 
 .player-info {
-    margin-top: 10px;
+    margin-top: 0;
 }
 
 .player-area h4 {
-    margin: 5px 0;
+    margin: 0;
     z-index: 10;
     position: relative;
     background: rgba(0,0,0,0.3);
-    padding: 5px 10px;
+    padding: 4px 8px;
     border-radius: 5px;
     flex-shrink: 0;
+    font-size: 0.95rem;
+}
+
+.player-info p {
+    margin: 2px 0;
+    font-size: 0.85rem;
 }
 
 .player-hand-hidden {
@@ -448,25 +640,30 @@ body {
     flex-direction: column;
     align-items: center;
     flex: 1;
-    margin-top: 5px;
+    margin-top: 0;
+    gap: 0;
 }
 
 .hidden-cards-area {
     position: relative;
-    margin-bottom: -60px;
+    min-height: 40px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: -30px;
     z-index: 1;
 }
 
 .visible-stack {
     display: flex;
     justify-content: center;
-    margin: 10px 0;
-    min-height: 160px;
-    min-width: 160px;
+    margin: 0;
+    min-height: 110px;
+    min-width: 120px;
     position: relative;
     z-index: 2;
     /* Add padding to create larger drop zone */
-    padding: 20px;
+    padding: 10px;
 }
 
 .visible-stack .card {
@@ -529,10 +726,30 @@ body {
     display: flex;
     gap: 10px;
     z-index: 100;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 90%;
 }
 
 .game-actions.hidden {
     display: none;
+}
+
+.phase2-actions-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-top: 15px;
+    padding: 10px;
+}
+
+.phase2-actions-container.hidden {
+    display: none;
+}
+
+.phase2-actions-container .btn {
+    min-width: 150px;
 }
 
 .drop-zone {
@@ -843,17 +1060,181 @@ body {
     50% { transform: translateY(-20px); }
 }
 
+/* Tablet and smaller screens */
+@media (max-width: 1024px) {
+    .container {
+        padding: 10px;
+    }
+
+    .players-sidebar {
+        width: 200px;
+        right: 10px;
+        top: 10px;
+        padding: 15px;
+    }
+
+    .game-board {
+        margin-right: 220px;
+    }
+
+    .center-area {
+        gap: 20px;
+        padding: 15px;
+    }
+
+    .deck-area, .battle-pile, .discarded-pile {
+        width: 100px;
+        height: 140px;
+    }
+
+    .deck-card-back, .discarded-card-back {
+        width: 50px;
+        height: 70px;
+    }
+
+    .deck-card-back .card-back-pattern,
+    .discarded-card-back .card-back-pattern {
+        width: 35px;
+        height: 55px;
+    }
+
+    .card {
+        width: 70px;
+        height: 95px;
+    }
+
+    .players-area {
+        gap: 15px;
+    }
+
+    .player-stack {
+        padding: 10px;
+    }
+}
+
+/* Mobile landscape and tablets */
 @media (max-width: 768px) {
     .players-sidebar {
         position: relative;
         right: auto;
         top: auto;
         width: 100%;
-        margin-bottom: 20px;
+        margin-bottom: 15px;
+        max-height: 200px;
     }
 
     .game-board {
         margin-right: 0;
+    }
+
+    .game-header {
+        flex-direction: column;
+        gap: 10px;
+        padding: 10px;
+    }
+
+    .game-info {
+        flex-direction: column;
+        gap: 10px;
+        font-size: 0.9rem;
+    }
+
+    .phase-indicator {
+        padding: 10px;
+        margin-bottom: 10px;
+    }
+
+    .center-area {
+        flex-wrap: wrap;
+        gap: 15px;
+        padding: 10px;
+    }
+
+    .deck-area, .battle-pile, .discarded-pile {
+        width: 90px;
+        height: 125px;
+    }
+
+    .deck-card-back, .discarded-card-back {
+        width: 45px;
+        height: 65px;
+    }
+
+    .deck-card-back .card-back-pattern,
+    .discarded-card-back .card-back-pattern {
+        width: 32px;
+        height: 50px;
+    }
+
+    .card {
+        width: 60px;
+        height: 85px;
+        font-size: 0.85rem;
+    }
+
+    .card-rank {
+        font-size: 1.2rem;
+    }
+
+    .hidden-card-back {
+        width: 50px;
+        height: 70px;
+    }
+
+    .card-back-pattern {
+        width: 35px;
+        height: 55px;
+    }
+
+    .hidden-cards-area {
+        min-height: 60px;
+    }
+
+    .players-area {
+        flex-direction: row;
+        gap: 8px;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding: 10px 5px;
+    }
+
+    .player-area {
+        min-width: 120px;
+        max-width: 140px;
+        padding: 6px;
+        gap: 3px;
+        flex-shrink: 0;
+    }
+
+    .player-area h4 {
+        font-size: 0.75rem;
+        padding: 3px 5px;
+    }
+
+    .player-info p {
+        font-size: 0.7rem;
+    }
+
+    .visible-stack {
+        min-height: 100px;
+        min-width: 100px;
+        padding: 10px;
+        margin: 3px 0;
+    }
+
+    .player-stack {
+        width: 100%;
+        min-height: 100px;
+        padding: 8px;
+    }
+
+    .hand {
+        padding: 10px;
+        min-height: 100px;
+    }
+    
+    .hand .card {
+        margin-left: -35px;
     }
 
     .welcome-screen h1 {
@@ -864,9 +1245,407 @@ body {
         min-width: 150px;
         margin: 5px;
     }
+
+    .rooms-list {
+        min-width: auto;
+        width: 100%;
+    }
     
     .modal-content {
         min-width: 250px;
-        padding: 30px;
+        padding: 20px;
+        margin: 0 10px;
+    }
+
+    .game-end-emoji {
+        font-size: 4rem;
+    }
+
+    .game-end-modal h2 {
+        font-size: 1.8rem;
+    }
+
+    .game-end-modal h3 {
+        font-size: 1.5rem;
+    }
+
+    .game-actions {
+        padding: 10px;
+    }
+
+    .btn {
+        padding: 10px 20px;
+        font-size: 1rem;
+        margin: 5px;
+    }
+}
+
+/* Mobile portrait */
+@media (max-width: 480px) {
+    .container {
+        padding: 5px;
+    }
+
+    .welcome-screen h1 {
+        font-size: 1.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .input-group {
+        margin-bottom: 1rem;
+        width: 100%;
+    }
+
+    .input-group input {
+        width: 100%;
+        min-width: auto;
+        margin: 5px 0;
+    }
+
+    .btn {
+        width: 100%;
+        margin: 5px 0;
+        padding: 12px;
+    }
+
+    .game-header {
+        padding: 8px;
+    }
+
+    .game-info span {
+        font-size: 0.8rem;
+    }
+
+    .players-sidebar {
+        padding: 8px;
+        max-height: 25vh;
+        right: 5px;
+        top: 70px;
+        width: 150px;
+        font-size: 0.8rem;
+    }
+
+    .players-sidebar h3 {
+        font-size: 0.9rem;
+        margin-bottom: 5px;
+    }
+
+    .player-item {
+        padding: 6px;
+        font-size: 0.75rem;
+        margin: 3px 0;
+    }
+
+    .center-area {
+        gap: 10px;
+        padding: 5px;
+    }
+
+    .deck-area, .battle-pile, .discarded-pile {
+        width: 70px;
+        height: 100px;
+    }
+
+    .deck-card-back, .discarded-card-back {
+        width: 36px;
+        height: 52px;
+    }
+
+    .deck-card-back .card-back-pattern,
+    .discarded-card-back .card-back-pattern {
+        width: 26px;
+        height: 42px;
+    }
+
+    .deck-card-back .card-back-pattern::before,
+    .discarded-card-back .card-back-pattern::before {
+        font-size: 1rem;
+    }
+
+    .deck-label, .pile-label {
+        font-size: 0.7rem;
+    }
+
+    .card {
+        width: 50px;
+        height: 70px;
+        font-size: 0.75rem;
+    }
+
+    .card-rank {
+        font-size: 1rem;
+    }
+
+    .card-suit {
+        font-size: 1.2rem;
+    }
+
+    .hidden-card-back {
+        width: 42px;
+        height: 60px;
+    }
+
+    .card-back-pattern {
+        width: 30px;
+        height: 48px;
+    }
+
+    .card-back-pattern::before {
+        font-size: 1.2rem;
+    }
+
+    .hidden-cards-area {
+        min-height: 50px;
+    }
+
+    .players-area {
+        gap: 5px;
+        padding: 8px 3px;
+    }
+
+    .player-area {
+        min-width: 100px;
+        max-width: 120px;
+        padding: 5px;
+    }
+
+    .player-area h4 {
+        font-size: 0.7rem;
+        padding: 2px 4px;
+    }
+
+    .player-info p {
+        font-size: 0.65rem;
+    }
+
+    .visible-stack {
+        min-height: 80px;
+        min-width: 80px;
+        padding: 8px;
+    }
+
+    .player-stack {
+        padding: 5px;
+        min-height: 80px;
+    }
+
+    .player-stack-header {
+        font-size: 0.85rem;
+    }
+
+    .hand {
+        padding: 8px;
+        min-height: 80px;
+    }
+    
+    .hand .card {
+        margin-left: -40px;
+    }
+
+    .phase-indicator {
+        padding: 8px;
+    }
+
+    .phase-indicator h3 {
+        font-size: 1rem;
+    }
+
+    .phase-indicator p {
+        font-size: 0.85rem;
+    }
+
+    .modal-content {
+        padding: 15px;
+        margin: 0 5px;
+    }
+
+    .modal-body h3 {
+        font-size: 1.3rem;
+    }
+
+    .modal-body p {
+        font-size: 0.9rem;
+    }
+
+    .game-end-emoji {
+        font-size: 3rem;
+        margin: 10px 0;
+    }
+
+    .game-end-modal h2 {
+        font-size: 1.5rem;
+    }
+
+    .game-end-modal h3 {
+        font-size: 1.2rem;
+    }
+
+    .game-end-modal p {
+        font-size: 0.9rem;
+    }
+
+    .game-end-modal .btn {
+        padding: 12px 30px;
+        font-size: 1rem;
+    }
+
+    /* Donation UI adjustments */
+    .donation-ui {
+        padding: 10px;
+    }
+
+    .donation-container {
+        padding: 10px;
+    }
+
+    .donation-header h3 {
+        font-size: 1rem;
+    }
+
+    .card-selection {
+        gap: 5px;
+    }
+
+    /* Game actions */
+    .game-actions {
+        padding: 8px;
+        gap: 5px;
+    }
+
+    .phase2-actions {
+        gap: 5px;
+    }
+
+    .phase2-actions p {
+        font-size: 0.85rem;
+    }
+}
+
+/* Very small screens */
+@media (max-width: 360px) {
+    .welcome-screen h1 {
+        font-size: 1.3rem;
+    }
+
+    .deck-area, .battle-pile, .discarded-pile {
+        width: 60px;
+        height: 85px;
+    }
+
+    .deck-card-back, .discarded-card-back {
+        width: 32px;
+        height: 46px;
+    }
+
+    .deck-card-back .card-back-pattern,
+    .discarded-card-back .card-back-pattern {
+        width: 22px;
+        height: 36px;
+    }
+
+    .deck-card-back .card-back-pattern::before,
+    .discarded-card-back .card-back-pattern::before {
+        font-size: 0.9rem;
+    }
+
+    .hidden-card-back {
+        width: 38px;
+        height: 52px;
+    }
+
+    .card-back-pattern {
+        width: 26px;
+        height: 42px;
+    }
+
+    .card-back-pattern::before {
+        font-size: 1rem;
+    }
+
+    .hidden-cards-area {
+        min-height: 45px;
+    }
+
+    .players-area {
+        gap: 4px;
+        padding: 5px 2px;
+    }
+
+    .player-area {
+        min-width: 85px;
+        max-width: 100px;
+        padding: 4px;
+    }
+
+    .player-area h4 {
+        font-size: 0.65rem;
+        padding: 2px 3px;
+    }
+
+    .player-info p {
+        font-size: 0.6rem;
+    }
+
+    .visible-stack {
+        min-height: 70px;
+        min-width: 70px;
+        padding: 6px;
+    }
+
+    .card {
+        width: 45px;
+        height: 60px;
+        font-size: 0.7rem;
+    }
+
+    .card-rank {
+        font-size: 0.9rem;
+    }
+
+    .card-suit {
+        font-size: 1rem;
+    }
+
+    .center-area {
+        gap: 5px;
+    }
+
+    .btn {
+        padding: 10px;
+        font-size: 0.9rem;
+    }
+}
+
+/* Landscape orientation fixes */
+@media (max-height: 600px) and (orientation: landscape) {
+    .players-sidebar {
+        max-height: 40vh;
+    }
+
+    .game-board {
+        gap: 10px;
+    }
+
+    .center-area {
+        gap: 15px;
+        padding: 10px;
+    }
+
+    .phase-indicator {
+        padding: 5px;
+    }
+
+    .hand {
+        padding: 8px;
+        min-height: 70px;
+    }
+    
+    .hand .card {
+        margin-left: -45px;
+    }
+
+    .modal-content {
+        max-height: 80vh;
+        overflow-y: auto;
     }
 }
