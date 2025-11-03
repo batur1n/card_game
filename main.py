@@ -421,6 +421,32 @@ async def handle_draw_card(room: GameRoom, player: Player):
     if player.hand:  # Player already has a card in hand
         return {"error": "You already have a card in hand"}
     
+    # PENALTY RULE 1: Check if top stack card could be given to others before drawing
+    # Only applies if: stack has >= 2 cards AND top card has NO seniority with card underneath
+    if len(player.visible_stack) >= 2:
+        top_card = player.visible_stack[-1]
+        underneath_card = player.visible_stack[-2]
+        
+        # Check if top card has seniority with underneath card
+        has_seniority_with_underneath = (
+            top_card.rank == underneath_card.rank + 1 or
+            (top_card.rank == 6 and underneath_card.rank == 14)
+        )
+        
+        # Only check penalty if top card does NOT have seniority with underneath
+        if not has_seniority_with_underneath:
+            # Check if top card could have been given to another player
+            can_give_top_to_someone = False
+            for target_player in room.players:
+                if target_player.id != player.id:
+                    if room.can_stack_card(top_card, target_player.visible_stack):
+                        can_give_top_to_someone = True
+                        break
+            
+            if can_give_top_to_someone:
+                player.bad_card_counter += 1
+                logger.info(f"{player.username} got bad card: drew from deck while top stack card could have been given to others")
+    
     # Draw card from deck
     drawn_card = room.deck.pop()
     logger.info(f"handle_draw_card: Drew card from deck - rank {drawn_card.rank}, suit {drawn_card.suit}")
@@ -487,7 +513,7 @@ async def handle_place_card(room: GameRoom, player: Player, message: dict):
             await end_player_turn(room, player)
             return
         
-        # Check for 6 on Ace penalty
+        # PENALTY RULE 3: Check for 6 on Ace penalty (only receiver gets penalty)
         if (card_to_place.rank == 6 and target_player.visible_stack and 
             target_player.visible_stack[-1].rank == 14):
             target_player.bad_card_counter += 1
@@ -533,11 +559,7 @@ async def handle_place_card(room: GameRoom, player: Player, message: dict):
                 await send_game_state(room)
         else:
             # Placing on own stack WITHOUT seniority rule
-            # Check TWO conditions:
-            # 1. Could the DRAWN CARD have been given to others?
-            # 2. Could the TOP STACK CARD (before placement) have been given to others?
-            
-            # Check if drawn card could have been given
+            # PENALTY RULE 2: Check if drawn card could have been given to others
             can_give_drawn_to_someone = False
             for target_player in room.players:
                 if target_player.id != player.id:
@@ -548,32 +570,6 @@ async def handle_place_card(room: GameRoom, player: Player, message: dict):
             if can_give_drawn_to_someone:
                 player.bad_card_counter += 1
                 logger.info(f"{player.username} got bad card: could give drawn card to others but placed on own stack without seniority")
-            
-            # Check if top stack card (before we place the new card) could have been given to others
-            # This only applies if there are at least 2 cards in stack (don't penalize for initial card)
-            # AND the top card has NO seniority with the card underneath
-            if len(player.visible_stack) >= 2:
-                top_card = player.visible_stack[-1]
-                underneath_card = player.visible_stack[-2]
-                
-                # Check if top card has seniority with underneath card
-                has_seniority_with_underneath = (
-                    top_card.rank == underneath_card.rank + 1 or
-                    (top_card.rank == 6 and underneath_card.rank == 14)
-                )
-                
-                # Only penalize if top card does NOT have seniority with underneath
-                if not has_seniority_with_underneath:
-                    can_give_top_to_someone = False
-                    for target_player in room.players:
-                        if target_player.id != player.id:
-                            if room.can_stack_card(top_card, target_player.visible_stack):
-                                can_give_top_to_someone = True
-                                break
-                    
-                    if can_give_top_to_someone:
-                        player.bad_card_counter += 1
-                        logger.info(f"{player.username} got bad card: could give top stack card to others before placing on own stack")
             
             # Turn ends automatically when placing on own stack and no seniority rule
             player.visible_stack.append(card_to_place)
@@ -622,7 +618,7 @@ async def handle_give_from_stack(room: GameRoom, player: Player, message: dict):
         await end_player_turn(room, player)
         return
     
-    # Check for 6 on Ace penalty
+    # PENALTY RULE 3: Check for 6 on Ace penalty (only receiver gets penalty)
     if (top_card.rank == 6 and target_player.visible_stack and 
         target_player.visible_stack[-1].rank == 14):
         target_player.bad_card_counter += 1
@@ -765,6 +761,14 @@ async def handle_play_card(room: GameRoom, player: Player, message: dict):
     active_players = [p for p in room.players if not p.is_out]
     
     if len(room.battle_pile) >= len(active_players):
+        logger.info(f"Battle pile complete ({len(room.battle_pile)} cards) - showing for 3 seconds before discarding")
+        
+        # First, send game state with the complete pile so all players can see it
+        await send_game_state(room)
+        
+        # Wait 3 seconds so all players can see the winning card
+        await asyncio.sleep(3)
+        
         logger.info(f"Battle pile discarded ({len(room.battle_pile)} cards)")
         # Move cards to discarded pile
         if not hasattr(room, 'discarded_cards'):
@@ -803,7 +807,7 @@ async def handle_play_card(room: GameRoom, player: Player, message: dict):
                     room.phase = GamePhase.WAITING
                     return
         
-        # Continue with current or next player
+        # Continue with current or next player after discard
         await send_game_state(room)
         return
     
@@ -1226,11 +1230,8 @@ async def transition_to_phase_two(room: GameRoom):
 
 async def send_game_state(room: GameRoom):
     for player in room.players:
-        # Determine if this player should see the last drawn card
-        # Show to all players EXCEPT the one who drew it (they already see it in their hand)
-        show_last_drawn = False
-        if room.last_drawn_card and room.last_card_player:
-            show_last_drawn = (player.id != room.last_card_player.id)
+        # Show last drawn card to ALL players in phase_one
+        show_last_drawn = bool(room.last_drawn_card)
         
         game_state = {
             "type": "game_state",
