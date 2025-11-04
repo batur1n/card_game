@@ -3,6 +3,9 @@ let gameState = {};
 let currentUsername = '';
 let currentRoomId = '';
 let draggedCard = null;
+let touchStartX = 0;
+let touchStartY = 0;
+let touchedCard = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', function() {
@@ -13,6 +16,11 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('dragover', handleDragOver);
     document.addEventListener('drop', handleDrop);
     document.addEventListener('dragend', handleDragEnd);
+    
+    // Enable touch events for mobile
+    document.addEventListener('touchstart', handleTouchStart, { passive: false });
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', handleTouchEnd, { passive: false });
 });
 
 // Room management functions
@@ -23,25 +31,25 @@ async function refreshRooms() {
         
         const container = document.getElementById('roomsContainer');
         if (data.rooms.length === 0) {
-            container.innerHTML = '<p>No rooms available</p>';
+            container.innerHTML = '<p>Немає доступних кімнат</p>';
         } else {
             container.innerHTML = data.rooms.map(room => 
                 `<div class="room-item" onclick="joinRoom('${room.id}')">
-                    <span>Room ${room.id}</span>
-                    <span>${room.players}/${room.max_players} players</span>
+                    <span>Кімната ${room.id}</span>
+                    <span>${room.players}/${room.max_players} гравців</span>
                 </div>`
             ).join('');
         }
     } catch (error) {
         console.error('Error loading rooms:', error);
-        showNotification('Error loading rooms', 'error');
+        showNotification('Помилка завантаження кімнат', 'error');
     }
 }
 
 async function createRoom() {
     const username = document.getElementById('usernameInput').value.trim();
     if (!username) {
-        showNotification('Please enter a username', 'error');
+        showNotification('Будь ласка, введіть ім\'я користувача', 'error');
         return;
     }
 
@@ -56,14 +64,14 @@ async function createRoom() {
         joinRoom(data.room_id);
     } catch (error) {
         console.error('Error creating room:', error);
-        showNotification('Error creating room', 'error');
+        showNotification('Помилка створення кімнати', 'error');
     }
 }
 
 function joinRoom(roomId) {
     const username = document.getElementById('usernameInput').value.trim();
     if (!username) {
-        showNotification('Please enter a username', 'error');
+        showNotification('Будь ласка, введіть ім\'я користувача', 'error');
         return;
     }
 
@@ -79,8 +87,8 @@ function joinRoom(roomId) {
     ws.onopen = function() {
         document.getElementById('welcomeScreen').style.display = 'none';
         document.getElementById('gameScreen').style.display = 'block';
-        document.getElementById('roomId').textContent = `Комната: ${roomId}`;
-        showNotification('Connected to room!', 'success');
+        document.getElementById('roomId').textContent = `Кімната: ${roomId}`;
+        showNotification('Під\'єднано до кімнати!', 'success');
     };
     
     ws.onmessage = function(event) {
@@ -89,7 +97,7 @@ function joinRoom(roomId) {
     };
     
     ws.onclose = function() {
-        showNotification('Connection closed', 'error');
+        showNotification('З\'єднання закрито', 'error');
         // Return to welcome screen
         document.getElementById('welcomeScreen').style.display = 'block';
         document.getElementById('gameScreen').style.display = 'none';
@@ -97,7 +105,7 @@ function joinRoom(roomId) {
     
     ws.onerror = function(error) {
         console.error('WebSocket error:', error);
-        showNotification('Connection error', 'error');
+        showNotification('Помилка з\'єднання', 'error');
     };
 }
 
@@ -108,6 +116,14 @@ function handleGameStateUpdate(data) {
     if (data.type === 'game_state') {
         const previousPhase = gameState?.phase;
         gameState = data;
+        
+        console.log('Received game state update:', {
+            phase: gameState.phase,
+            previousPhase: previousPhase,
+            players: gameState.players?.map(p => ({username: p.username, ready: p.ready})),
+            deck_size: gameState.deck_size,
+            player_id: gameState.player_id
+        });
         
         // Check if game just ended (transition from phase_two to waiting)
         if (previousPhase === 'phase_two' && gameState.phase === 'waiting') {
@@ -151,6 +167,8 @@ function handleGameStateUpdate(data) {
 }
 
 function updateUI() {
+    console.log('updateUI called, phase:', gameState.phase);
+    
     // Handle phase 2 UI FIRST (before updateGameActions)
     if (gameState.phase === 'phase_two') {
         updatePhase2UI();
@@ -159,10 +177,15 @@ function updateUI() {
         cleanupPhase2UI();
     }
     
+    console.log('Calling updatePhaseDisplay...');
     updatePhaseDisplay();
+    console.log('Calling updatePlayersDisplay...');
     updatePlayersDisplay();
+    console.log('Calling updateGameBoard...');
     updateGameBoard();
+    console.log('Calling updateHand...');
     updateHand();
+    console.log('Calling updateGameActions...');
     updateGameActions();
     
     // Handle donation phase
@@ -174,7 +197,7 @@ function updateUI() {
             hideWaitingModal();
         } else {
             hideDonationUI();
-            showWaitingModal('Donation Phase', 'Please wait while other players donate their bad cards...');
+            showWaitingModal('Фаза дарування', 'Будь ласка, зачекайте, поки інші гравці віддадуть свої погані карти...');
         }
     } else {
         hideDonationUI();
@@ -271,62 +294,78 @@ function updateGameActions() {
 }
 
 function updatePhaseDisplay() {
-    const phaseText = document.getElementById('phaseText');
+    console.log('updatePhaseDisplay called, current phase:', gameState.phase);
+    
     const gamePhase = document.getElementById('gamePhase');
     const trumpInfo = document.getElementById('trumpInfo');
-    const trumpSuit = document.getElementById('trumpSuit');
-    const trumpIndicator = document.getElementById('trumpIndicator');
+    const trumpSuitDisplay = document.getElementById('trumpSuitDisplay');
     const readyButton = document.getElementById('readyButton');
     const currentPlayerElement = document.getElementById('currentPlayer');
     const deckArea = document.getElementById('deckArea');
     const discardedPile = document.getElementById('discardedPile');
+    const leaveButton = document.getElementById('leaveRoomButton');
+    
+    console.log('DOM elements found:', {
+        gamePhase: !!gamePhase,
+        readyButton: !!readyButton,
+        deckArea: !!deckArea,
+        discardedPile: !!discardedPile,
+        leaveButton: !!leaveButton,
+        trumpInfo: !!trumpInfo
+    });
     
     // Safety checks for required elements
-    if (!phaseText || !gamePhase || !readyButton || !deckArea) {
+    if (!gamePhase || !readyButton || !deckArea) {
         console.error('Missing required DOM elements for phase display');
         return;
     }
     
     switch(gameState.phase) {
         case 'waiting':
-            phaseText.textContent = 'Ждем';
-            gamePhase.textContent = 'Phase: Waiting';
+            gamePhase.textContent = 'Фаза: Очікування';
             readyButton.style.display = 'block';
             
-            // Update ready button state based on player's ready status
+            // Update ready button and leave button state based on player's ready status
             const myPlayer = gameState.players?.find(p => p.id === gameState.player_id);
+            
             if (myPlayer) {
                 if (myPlayer.ready) {
-                    readyButton.textContent = 'Ждем остальних...';
+                    readyButton.textContent = 'Чекаємо інших...';
                     readyButton.disabled = true;
+                    // Hide leave button once player is ready
+                    if (leaveButton) leaveButton.style.display = 'none';
                 } else {
                     readyButton.textContent = 'Готов';
                     readyButton.disabled = false;
+                    // Show leave button when player is not ready
+                    if (leaveButton) leaveButton.style.display = 'block';
                 }
             }
             
             deckArea.style.display = 'flex';
             if (discardedPile) discardedPile.style.display = 'none';
+            if (trumpInfo) trumpInfo.classList.add('hidden');
             break;
         case 'phase_one':
-            phaseText.textContent = 'Тянем карти з колоди';
             gamePhase.textContent = 'Тянем потянем';
             readyButton.style.display = 'none';
+            if (leaveButton) leaveButton.style.display = 'none';
             deckArea.style.display = 'flex';
             if (discardedPile) discardedPile.style.display = 'none';
+            if (trumpInfo) trumpInfo.classList.add('hidden');
             break;
         case 'donation':
-            phaseText.textContent = 'Даєм погані карти';
             gamePhase.textContent = 'По х*йовой раз два три!';
             readyButton.style.display = 'none';
+            if (leaveButton) leaveButton.style.display = 'none';
             deckArea.style.display = 'none';
             if (discardedPile) discardedPile.style.display = 'none';
             showDonationUI();
             break;
         case 'phase_two':
-            phaseText.textContent = 'Будeм бітса?';
             gamePhase.textContent = 'Замес іде';
             readyButton.style.display = 'none';
+            if (leaveButton) leaveButton.style.display = 'none';
             deckArea.style.display = 'none';
             if (discardedPile) discardedPile.style.display = 'flex';
             break;
@@ -334,15 +373,12 @@ function updatePhaseDisplay() {
 
     // Only show trump info in phase 2 or later
     if (gameState.trump_suit && gameState.phase !== 'waiting' && gameState.phase !== 'phase_one') {
-        if (trumpInfo) trumpInfo.classList.remove('hidden');
-        if (trumpSuit) trumpSuit.textContent = getSuitSymbol(gameState.trump_suit);
-        if (trumpIndicator) {
-            trumpIndicator.classList.remove('hidden');
-            trumpIndicator.textContent = `Козирь: ${getSuitSymbol(gameState.trump_suit)}`;
+        if (trumpInfo && trumpSuitDisplay) {
+            trumpInfo.classList.remove('hidden');
+            trumpSuitDisplay.textContent = getSuitSymbol(gameState.trump_suit);
         }
     } else {
         if (trumpInfo) trumpInfo.classList.add('hidden');
-        if (trumpIndicator) trumpIndicator.classList.add('hidden');
     }
 
     // Update current player
@@ -375,7 +411,7 @@ function updateGameInstructions() {
     let instruction = '';
     
     if (gameState.phase === 'waiting') {
-        instruction = 'Click Ready when you\'re ready to start!';
+        instruction = 'Натисніть Готов, коли будете готові почати!';
     } else if (gameState.phase === 'phase_one') {
         if (isMyTurn) {
             const hasHandCard = myPlayer.hand && myPlayer.hand.length > 0;
@@ -526,11 +562,11 @@ function renderVisibleStack(stack, playerId) {
         const isTopCard = index === stack.length - 1;
         const isSecondToTop = index === stack.length - 2;
         
-        // Show all cards with different visibility levels
+        // Show all cards with different visibility levels - render upwards to prevent overflow
         let leftOffset, topOffset, cardClass;
         if (isTopCard) {
-            // Top card: full visibility with offset to show second card
-            leftOffset = 35;
+            // Top card: full visibility with tight offset to show second card
+            leftOffset = 20;
             topOffset = 0;
             cardClass = 'stack-top-card';
         } else if (isSecondToTop) {
@@ -539,9 +575,9 @@ function renderVisibleStack(stack, playerId) {
             topOffset = 0;
             cardClass = 'stack-second-card';
         } else {
-            // Other cards: just a thin edge visible (stacked underneath)
-            leftOffset = -5 * (stack.length - 1 - index); // Negative offset for tucked cards
-            topOffset = 2 * (stack.length - 1 - index);
+            // Other cards: stack upwards with tight spacing (negative top offset)
+            leftOffset = -3 * (stack.length - 1 - index); // Very tight horizontal offset
+            topOffset = -8 * (stack.length - 1 - index); // Negative top offset to go upwards
             cardClass = 'stack-hidden-card';
         }
         
@@ -726,12 +762,6 @@ function updateDeckDisplay() {
             </div>`;
     }
     
-    // Add trump indicator if it exists
-    const trumpIndicator = document.getElementById('trumpIndicator');
-    if (trumpIndicator) {
-        deckHTML += trumpIndicator.outerHTML;
-    }
-    
     // Add count indicator only in phase_two
     if (gameState.phase === 'phase_two') {
         deckHTML += `<span class="deck-count" style="
@@ -791,7 +821,7 @@ function updateLastDrawnCard() {
             <div class="rank rank-bottom-right">${getRankSymbol(card.rank)}</div>
             <div class="suit suit-bottom-right">${getSuitSymbol(card.suit)}</div>
         </div>
-        <div class="drawn-card-label">Last Drawn</div>
+        <div class="drawn-card-label"></div>
     `;
 }
 
@@ -1056,6 +1086,102 @@ function canDropCard(card, dropZone) {
     return false;
 }
 
+// Touch event handlers for mobile (iOS)
+function handleTouchStart(e) {
+    const target = e.target.closest('.card');
+    if (!target || !target.hasAttribute('data-card') || target.getAttribute('draggable') === 'false') {
+        return;
+    }
+    
+    touchedCard = target;
+    const touch = e.touches[0];
+    touchStartX = touch.clientX;
+    touchStartY = touch.clientY;
+    
+    // Set up dragged card data
+    const cardData = target.getAttribute('data-card');
+    const source = target.getAttribute('data-source');
+    
+    try {
+        if (source === 'stack') {
+            draggedCard = JSON.parse(decodeURIComponent(cardData));
+        } else {
+            draggedCard = JSON.parse(cardData);
+        }
+        draggedCard.source = source;
+        target.classList.add('dragging');
+    } catch (error) {
+        console.error('Error parsing card data in touch:', error);
+        touchedCard = null;
+    }
+}
+
+function handleTouchMove(e) {
+    if (!touchedCard || !draggedCard) return;
+    
+    e.preventDefault(); // Prevent scrolling while dragging
+    const touch = e.touches[0];
+    
+    // Visual feedback - move card with finger
+    touchedCard.style.position = 'fixed';
+    touchedCard.style.left = (touch.clientX - 35) + 'px';
+    touchedCard.style.top = (touch.clientY - 50) + 'px';
+    touchedCard.style.zIndex = '10000';
+    touchedCard.style.pointerEvents = 'none';
+}
+
+function handleTouchEnd(e) {
+    if (!touchedCard || !draggedCard) {
+        if (touchedCard) {
+            touchedCard.classList.remove('dragging');
+            touchedCard.style.position = '';
+            touchedCard.style.left = '';
+            touchedCard.style.top = '';
+            touchedCard.style.zIndex = '';
+            touchedCard.style.pointerEvents = '';
+        }
+        touchedCard = null;
+        draggedCard = null;
+        return;
+    }
+    
+    const touch = e.changedTouches[0];
+    const dropTarget = document.elementFromPoint(touch.clientX, touch.clientY);
+    
+    // Find drop zone
+    let dropZone = dropTarget;
+    let foundDropZone = false;
+    
+    for (let i = 0; i < 5 && dropZone; i++) {
+        if (dropZone.classList && (
+            dropZone.classList.contains('visible-stack') || 
+            dropZone.classList.contains('battle-pile') ||
+            dropZone.id === 'battlePile'
+        )) {
+            foundDropZone = true;
+            break;
+        }
+        dropZone = dropZone.parentElement;
+    }
+    
+    // Reset card position
+    touchedCard.classList.remove('dragging');
+    touchedCard.style.position = '';
+    touchedCard.style.left = '';
+    touchedCard.style.top = '';
+    touchedCard.style.zIndex = '';
+    touchedCard.style.pointerEvents = '';
+    
+    if (foundDropZone && dropZone) {
+        // Simulate drop
+        const fakeEvent = { target: dropZone, preventDefault: () => {} };
+        handleDrop(fakeEvent);
+    }
+    
+    touchedCard = null;
+    draggedCard = null;
+}
+
 // Game actions
 function toggleReady() {
     if (ws && gameState.phase === 'waiting') {
@@ -1064,7 +1190,30 @@ function toggleReady() {
         const button = document.getElementById('readyButton');
         button.textContent = 'Ждем...';
         button.disabled = true;
+        
+        // Hide leave button once ready is pressed
+        const leaveButton = document.getElementById('leaveRoomButton');
+        if (leaveButton) {
+            leaveButton.style.display = 'none';
+        }
     }
+}
+
+function leaveRoom() {
+    if (ws) {
+        ws.close();
+    }
+    
+    // Clear game state
+    gameState = {};
+    currentRoomId = '';
+    
+    // Hide game screen and show welcome screen
+    document.getElementById('gameScreen').style.display = 'none';
+    document.getElementById('welcomeScreen').style.display = 'block';
+    
+    // Refresh rooms list
+    refreshRooms();
 }
 
 function drawCard() {
@@ -1285,9 +1434,15 @@ function showDonationForPlayer(recipients, recipientIndex) {
     
     // Show donation interface for this specific recipient
     let donationHTML = '<div id="donationInterface" class="donation-interface">';
-    donationHTML += `<h3>Donate cards to ${recipient.username}</h3>`;
-    donationHTML += `<p>They need ${stillNeeded} more card(s) from you</p>`;
-    donationHTML += `<p>Select up to ${stillNeeded} cards from your hand:</p>`;
+    donationHTML += `<h3>Віддайте карти гравцю ${recipient.username}</h3>`;
+    donationHTML += `<p>Потрібно ще ${stillNeeded} карт(и) від вас</p>`;
+    
+    // Show trump suit if available
+    if (gameState.trump_suit) {
+        donationHTML += `<div class="donation-trump-info">Козир: ${getSuitSymbol(gameState.trump_suit)}</div>`;
+    }
+    
+    donationHTML += `<p>Виберіть до ${stillNeeded} карт зі своєї руки:</p>`;
     
     donationHTML += '<div class="donation-my-stack">';
     donationHTML += myPlayer.hand.map((card, index) => {
@@ -1304,7 +1459,7 @@ function showDonationForPlayer(recipients, recipientIndex) {
     donationHTML += '</div>';
     
     donationHTML += '<div class="donation-buttons">';
-    donationHTML += '<button class="btn btn-primary" onclick="confirmDonationToPlayer()">Confirm</button>';
+    donationHTML += '<button class="btn btn-primary" onclick="confirmDonationToPlayer()">Підтвердити</button>';
     donationHTML += '</div>';
     donationHTML += '</div>';
     
@@ -1412,7 +1567,7 @@ function updateUI() {
             hideWaitingModal();
         } else {
             hideDonationUI();
-            showWaitingModal('Donation Phase', `Waiting for ${currentPlayer?.username} to donate cards...`);
+            showWaitingModal('Фаза дарування', `Чекаємо, поки ${currentPlayer?.username} віддасть карти...`);
         }
     } else {
         hideDonationUI();
@@ -1464,11 +1619,11 @@ function updatePhase2UI() {
             // Clear any existing content
             phase2Container.innerHTML = '';
             
-            // Show "Take Pile" button if battle pile exists
-            if (gameState.battle_pile && gameState.battle_pile.length > 0) {
+            // Show "Take Pile" button if battle pile exists AND not during 3-second discard delay
+            if (gameState.battle_pile && gameState.battle_pile.length > 0 && !gameState.pile_discard_in_progress) {
                 const takePileBtn = document.createElement('button');
                 takePileBtn.className = 'btn btn-secondary';
-                takePileBtn.textContent = 'Взять купу';
+                takePileBtn.textContent = 'Взять нижню';
                 takePileBtn.onclick = takeBattlePile;
                 phase2Container.appendChild(takePileBtn);
             }
