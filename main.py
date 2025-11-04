@@ -79,6 +79,7 @@ class GameRoom:
         self.last_drawn_card = None
         self.losers_from_previous_game = []  # Track losers for turn order
         self.drawn_cards_order = []  # Track order of drawn cards for trump determination
+        self.pile_discard_in_progress = False  # Flag for 3-second delay when showing beaten pile
         
     def add_player(self, player: Player):
         if len(self.players) < 6:
@@ -335,10 +336,15 @@ async def handle_message(room: GameRoom, player: Player, message: dict):
     action = message.get("action")
     
     if action == "ready":
+        logger.info(f"Player {player.username} marked as ready in phase {room.phase}")
         player.ready = True
+        ready_count = sum(1 for p in room.players if p.ready)
+        logger.info(f"Ready count: {ready_count}/{len(room.players)}, min players: 2, all_players_ready: {room.all_players_ready()}")
         if room.all_players_ready():
+            logger.info(f"All players ready! Starting game...")
             await start_game(room)
         else:
+            logger.info(f"Not all players ready yet, sending game state")
             await send_game_state(room)
     
     elif action == "draw_card" and room.phase == GamePhase.PHASE_ONE:
@@ -669,16 +675,16 @@ def can_beat_card(card: Card, target_card: Card, trump_suit: str) -> bool:
     if target_card.suit == 'spades' and target_card.rank == 7:
         return card.suit == 'spades'
     
-    # Spades can only be beaten by spades
-    if target_card.suit == 'spades':
-        return card.suit == 'spades' and card.rank > target_card.rank
-    
-    # Same suit: higher rank or 6 beats Ace
+    # Same suit: higher rank or 6 beats Ace (works for all suits including spades)
     if card.suit == target_card.suit:
         if card.rank > target_card.rank:
             return True
         if card.rank == 6 and target_card.rank == 14:
             return True
+        return False
+    
+    # Spades can only be beaten by spades (already handled above in same suit check)
+    if target_card.suit == 'spades':
         return False
     
     # Trump beats non-trump (unless target is spade)
@@ -763,11 +769,17 @@ async def handle_play_card(room: GameRoom, player: Player, message: dict):
     if len(room.battle_pile) >= len(active_players):
         logger.info(f"Battle pile complete ({len(room.battle_pile)} cards) - showing for 3 seconds before discarding")
         
+        # Set flag to hide "take pile" button during delay
+        room.pile_discard_in_progress = True
+        
         # First, send game state with the complete pile so all players can see it
         await send_game_state(room)
         
         # Wait 3 seconds so all players can see the winning card
         await asyncio.sleep(3)
+        
+        # Clear flag after delay
+        room.pile_discard_in_progress = False
         
         logger.info(f"Battle pile discarded ({len(room.battle_pile)} cards)")
         # Move cards to discarded pile
@@ -853,6 +865,8 @@ async def handle_take_pile(room: GameRoom, player: Player):
         player.hand.extend(room.battle_pile)
         logger.info(f"{player.username} took {len(room.battle_pile)} cards from battle pile")
         room.battle_pile = []
+        # Sort hand after taking cards
+        player.hand = sort_hand(player.hand)
         
         # Check all players for hidden card pickup (since pile is now empty)
         for p in room.players:
@@ -879,6 +893,8 @@ async def handle_take_pile(room: GameRoom, player: Player):
         bottom_card = room.battle_pile.pop(0)
         player.hand.append(bottom_card)
         logger.info(f"{player.username} took bottom card: {bottom_card.rank} of {bottom_card.suit}")
+        # Sort hand after taking card
+        player.hand = sort_hand(player.hand)
         
         # Check all players for hidden card pickup (bottom card removed from pile)
         for p in room.players:
@@ -967,6 +983,8 @@ async def check_player_status(room: GameRoom, player: Player):
                 player.hand.extend(player.hidden_cards)
                 player.hidden_cards = []
                 player.has_picked_hidden_cards = True
+                # Sort hand after picking up hidden cards
+                player.hand = sort_hand(player.hand)
                 logger.info(f"{player.username} picked up {len(player.hand)} hidden cards")
                 
                 await manager.send_personal_message(
@@ -1183,6 +1201,14 @@ async def handle_donate_cards(room: GameRoom, player: Player, message: dict):
         # Send updated game state so they see the updated hand and next recipient
         await send_game_state(room)
 
+def sort_hand(hand: List[Card]) -> List[Card]:
+    """Sort hand by suit and then by rank (descending) within each suit"""
+    # Define suit order: hearts, diamonds, clubs, spades
+    suit_order = {'hearts': 0, 'diamonds': 1, 'clubs': 2, 'spades': 3}
+    
+    # Sort by suit first, then by rank within each suit (descending: high to low)
+    return sorted(hand, key=lambda card: (suit_order.get(card.suit, 4), -card.rank))
+
 async def transition_to_phase_two(room: GameRoom):
     """Transition to phase 2 (battle phase)"""
     logger.info("Transitioning to Phase 2 (Battle)")
@@ -1208,6 +1234,12 @@ async def transition_to_phase_two(room: GameRoom):
             player.hidden_cards = []
             player.has_picked_hidden_cards = True
             logger.info(f"{player.username} donated all cards, picked up {len(player.hand)} hidden cards at start of Phase 2")
+    
+    # Sort all players' hands by suit and rank
+    for player in room.players:
+        if player.hand:
+            player.hand = sort_hand(player.hand)
+            logger.info(f"Sorted hand for {player.username}")
     
     # Reset bad card counters (donations already handled in donation phase)
     for player in room.players:
@@ -1245,7 +1277,8 @@ async def send_game_state(room: GameRoom):
             "last_drawn_card": room.last_drawn_card.to_dict() if show_last_drawn else None,
             "player_id": player.id,
             "players_needing_donations": [p.id for p in room.players if p.bad_card_counter > 0],
-            "donation_tracker": getattr(room, 'donation_tracker', {})  # Include donation progress
+            "donation_tracker": getattr(room, 'donation_tracker', {}),  # Include donation progress
+            "pile_discard_in_progress": room.pile_discard_in_progress  # Flag for 3-second delay
         }
         
         # Add player info
