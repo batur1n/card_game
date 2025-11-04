@@ -10,7 +10,7 @@
     <div class="container">
         <!-- Welcome Screen -->
         <div id="welcomeScreen" class="welcome-screen">
-            <h1>🤡 v0.7.1</h1>
+            <h1>🤡 v0.7.4</h1>
             
             <div class="input-group">
                 <input type="text" id="usernameInput" placeholder="Введіть ваше ім'я" />
@@ -35,17 +35,12 @@
                 <div class="game-info">
                     <span id="roomId"></span>
                     <span id="gamePhase">Фаза: Очікування</span>
+                    <span id="trumpInfo" class="trump-info hidden">Козир: <span id="trumpSuitDisplay"></span></span>
                     <span id="currentPlayer"></span>
                 </div>
-                <button class="btn btn-primary" id="readyButton" onclick="toggleReady()">Готов</button>
-            </div>
-
-            <div class="phase-indicator">
-                <h3>Фаза</h3>
-                <p id="phaseText">Очікування</p>
-                <div id="trumpInfo" class="hidden">
-                    <h4>Козир</h4>
-                    <p id="trumpSuit"></p>
+                <div class="waiting-buttons">
+                    <button class="btn btn-primary" id="readyButton" onclick="toggleReady()">Готов</button>
+                    <button class="btn btn-danger" id="leaveRoomButton" onclick="leaveRoom()" style="display: none;">Вийти з кімнати</button>
                 </div>
             </div>
 
