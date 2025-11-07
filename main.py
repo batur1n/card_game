@@ -9,13 +9,14 @@ from typing import Dict, List, Optional
 from enum import Enum
 import random
 import logging
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('game_debug.log'),
+        # logging.FileHandler('game_debug.log'),  # Disabled to save server space
         logging.StreamHandler()
     ]
 )
@@ -64,6 +65,7 @@ class Player:
         self.pending_donations = {}  # Add this line
         self.last_played_card = None  # Track last card played in phase 2
         self.has_picked_hidden_cards = False  # Track if hidden cards were picked up
+        self.is_loser = False  # Track if player is the loser (for displaying clown emoji)
 
 class GameRoom:
     def __init__(self, room_id: str):
@@ -219,10 +221,12 @@ class GameRoom:
                 for i, player in enumerate(self.players):
                     if player.id == loser_id:
                         self.current_player_index = i
+                        logger.info(f"First player determined: {player.username} (was loser from previous game)")
                         return
         
         # If no previous losers or they're not in game, random selection
         self.current_player_index = random.randint(0, len(self.players) - 1)
+        logger.info(f"First player random: {self.players[self.current_player_index].username}")
     
     def all_players_ready(self) -> bool:
         return len(self.players) >= 2 and all(p.ready for p in self.players)
@@ -230,6 +234,38 @@ class GameRoom:
 # Global game state
 rooms: Dict[str, GameRoom] = {}
 connections: Dict[str, WebSocket] = {}
+# Track unique IPs with last connection timestamp and connection count
+connected_ips: Dict[str, Dict[str, any]] = {}  # {ip: {"timestamp": str, "count": int}}
+
+def save_ip_to_file(ip: str, timestamp: str, count: int):
+    """Save IP address with timestamp and connection count to file, updating if already exists"""
+    try:
+        # Read existing IPs
+        ip_data = {}
+        try:
+            with open('connected_ips.txt', 'r') as f:
+                for line in f:
+                    if '|' in line:
+                        parts = line.strip().split('|')
+                        if len(parts) == 3:
+                            stored_ip, stored_time, stored_count = parts
+                            ip_data[stored_ip] = {"timestamp": stored_time, "count": int(stored_count)}
+                        elif len(parts) == 2:
+                            # Backwards compatibility: old format without count
+                            stored_ip, stored_time = parts
+                            ip_data[stored_ip] = {"timestamp": stored_time, "count": 1}
+        except FileNotFoundError:
+            pass
+        
+        # Update with new/updated IP
+        ip_data[ip] = {"timestamp": timestamp, "count": count}
+        
+        # Write back to file
+        with open('connected_ips.txt', 'w') as f:
+            for stored_ip, data in sorted(ip_data.items()):
+                f.write(f"{stored_ip}|{data['timestamp']}|{data['count']}\n")
+    except Exception as e:
+        logger.error(f"Failed to save IP to file: {e}")
 
 class ConnectionManager:
     def __init__(self):
@@ -280,8 +316,33 @@ async def create_room():
     rooms[room_id] = GameRoom(room_id)
     return {"room_id": room_id}
 
+@app.get("/api/stats")
+async def get_stats():
+    """Get server statistics including unique IP count"""
+    return {
+        "unique_ips": len(connected_ips),
+        "active_rooms": len(rooms),
+        "total_players": sum(len(room.players) for room in rooms.values())
+    }
+
 @app.websocket("/ws/{room_id}/{username}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, username: str):
+    # Log unique IP address with timestamp and increment connection count
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    if client_ip not in connected_ips:
+        # New IP
+        connected_ips[client_ip] = {"timestamp": timestamp, "count": 1}
+        logger.info(f"New unique IP connected: {client_ip} (Total unique IPs: {len(connected_ips)})")
+    else:
+        # Existing IP - increment counter
+        connected_ips[client_ip]["count"] += 1
+        connected_ips[client_ip]["timestamp"] = timestamp
+        logger.info(f"IP reconnected: {client_ip} (Connection #{connected_ips[client_ip]['count']})")
+    
+    save_ip_to_file(client_ip, timestamp, connected_ips[client_ip]["count"])
+    
     player = Player(username, websocket)
     
     # Create room if it doesn't exist
@@ -406,6 +467,7 @@ async def start_game(room: GameRoom):
         player.last_played_card = None
         player.has_donated = False
         player.pending_donations = {}
+        # Note: is_loser flag is NOT reset here - it stays through the next game
         if hasattr(player, 'locked_stack_cards'):
             player.locked_stack_cards.clear()
     
@@ -503,9 +565,10 @@ async def handle_place_card(room: GameRoom, player: Player, message: dict):
     if not placing_on_own_stack:
         # Placing on another player's stack - check seniority rule
         if not room.can_stack_card(card_to_place, target_player.visible_stack):
-            # Invalid move - increment bad card counter and place card on player's own stack
+            # PENALTY RULE 4: Invalid move - increment bad card counter
+            # Card stays on target player's stack where it was placed
             player.bad_card_counter += 1
-            player.visible_stack.append(card_to_place)
+            target_player.visible_stack.append(card_to_place)
             player.hand.remove(card_to_place)
             
             # Clear last drawn card (card has been placed)
@@ -513,7 +576,7 @@ async def handle_place_card(room: GameRoom, player: Player, message: dict):
             room.last_card_player = None
             
             await manager.send_personal_message(
-                json.dumps({"type": "error", "message": "Invalid card placement! Card placed on your stack. Bad card counter increased."}), 
+                json.dumps({"type": "error", "message": "Invalid card placement! Bad card counter increased."}), 
                 player.id
             )
             await end_player_turn(room, player)
@@ -782,16 +845,22 @@ async def handle_play_card(room: GameRoom, player: Player, message: dict):
         room.pile_discard_in_progress = False
         
         logger.info(f"Battle pile discarded ({len(room.battle_pile)} cards)")
+        
+        # CRITICAL: Before discarding, identify the player who played the LAST card
+        # This player LOSES if they have no cards left (they completed their turn with no cards)
+        last_card_player = player  # This is the player who just played the card that completed the pile
+        
         # Move cards to discarded pile
         if not hasattr(room, 'discarded_cards'):
             room.discarded_cards = []
         room.discarded_cards.extend(room.battle_pile)
         room.battle_pile = []
         
-        # Check ALL active players' status after discard (for hidden cards pickup)
-        # This is important in 2-player scenarios where both may have played their last card
+        # Check ALL active players' status after discard
+        # For the player who played the LAST card: if no cards left, they LOSE
+        # For other players: if no cards left, they WIN
         for active_player in active_players:
-            await check_player_status(room, active_player)
+            await check_player_status(room, active_player, is_last_card_player=(active_player.id == last_card_player.id))
         
         # Check if game ended after checking player status
         if room.phase == GamePhase.WAITING:
@@ -865,8 +934,8 @@ async def handle_take_pile(room: GameRoom, player: Player):
         player.hand.extend(room.battle_pile)
         logger.info(f"{player.username} took {len(room.battle_pile)} cards from battle pile")
         room.battle_pile = []
-        # Sort hand after taking cards
-        player.hand = sort_hand(player.hand)
+        # Sort hand after taking cards (with trump suit priority)
+        player.hand = sort_hand(player.hand, trump_suit=room.trump_suit)
         
         # Check all players for hidden card pickup (since pile is now empty)
         for p in room.players:
@@ -893,8 +962,8 @@ async def handle_take_pile(room: GameRoom, player: Player):
         bottom_card = room.battle_pile.pop(0)
         player.hand.append(bottom_card)
         logger.info(f"{player.username} took bottom card: {bottom_card.rank} of {bottom_card.suit}")
-        # Sort hand after taking card
-        player.hand = sort_hand(player.hand)
+        # Sort hand after taking card (with trump suit priority)
+        player.hand = sort_hand(player.hand, trump_suit=room.trump_suit)
         
         # Check all players for hidden card pickup (bottom card removed from pile)
         for p in room.players:
@@ -915,8 +984,15 @@ async def handle_take_pile(room: GameRoom, player: Player):
         
         await send_game_state(room)
 
-async def check_player_status(room: GameRoom, player: Player):
-    """Check if player should pick hidden cards or has won"""
+async def check_player_status(room: GameRoom, player: Player, is_last_card_player: bool = False):
+    """Check if player should pick hidden cards, has won, or has lost
+    
+    Args:
+        room: The game room
+        player: The player to check
+        is_last_card_player: True if this player played the LAST card that completed/discarded the pile
+                           (this player LOSES if they have no cards left)
+    """
     # Skip if player already out
     if player.is_out:
         return
@@ -931,40 +1007,43 @@ async def check_player_status(room: GameRoom, player: Player):
         # Battle pile must be empty for a new pile to have started
         new_pile_started = len(room.battle_pile) == 0
         
-        # CRITICAL: Player can only win when their last played card has been DISCARDED (pile is empty)
-        # If pile is not empty, player must wait for pile to resolve before winning
-        # This prevents marking player OUT too early when they start a pile with their last card
+        # CRITICAL ENDGAME LOGIC:
+        # When pile gets discarded and player has no cards:
+        # - If player played the LAST card (is_last_card_player=True): they LOSE
+        # - If player played an earlier card: they WIN
         if new_pile_started:
             # First check if player has won (no cards in hand, no hidden cards, pile is empty)
             if len(player.hidden_cards) == 0 and player.has_picked_hidden_cards:
-                # Player has won! (no cards in hand, no hidden cards, and already picked up hidden cards)
-                player.is_out = True
-                logger.info(f"{player.username} has won!")
                 
-                await manager.send_personal_message(
-                    json.dumps({"type": "notification", "message": "You won! 🎉"}),
-                    player.id
-                )
-                
-                # Check if game is over
-                active_players = [p for p in room.players if not p.is_out]
-                if len(active_players) == 1:
-                    # Last player loses
-                    loser = active_players[0]
-                    loser.is_out = True
-                    logger.info(f"{loser.username} is the loser!")
+                # Check if this player is the one who played the LAST card
+                if is_last_card_player:
+                    # Player who played last card LOSES
+                    player.is_out = True
+                    player.is_loser = True
+                    logger.info(f"{player.username} played the last card and lost!")
                     
                     await manager.send_personal_message(
                         json.dumps({"type": "notification", "message": "You lost! You'll get +1 hidden card next round. 😔"}),
-                        loser.id
+                        player.id
                     )
                     
-                    # Game finished - transition to WAITING for next round
+                    # Game finished - all other active players won
                     room.phase = GamePhase.WAITING
+                    
+                    # Mark all other active players as winners
+                    for p in room.players:
+                        if not p.is_out and p.id != player.id:
+                            p.is_out = True
+                            logger.info(f"{p.username} has won!")
+                            await manager.send_personal_message(
+                                json.dumps({"type": "notification", "message": "You won! 🎉"}),
+                                p.id
+                            )
+                    
                     # Append loser to list (accumulates across rounds)
                     if not hasattr(room, 'losers_from_previous_game'):
                         room.losers_from_previous_game = []
-                    room.losers_from_previous_game.append(loser.id)
+                    room.losers_from_previous_game.append(player.id)
                     
                     # Reset all players to not ready for next round
                     for p in room.players:
@@ -976,15 +1055,62 @@ async def check_player_status(room: GameRoom, player: Player):
                     # Notify all players game ended
                     await manager.broadcast_to_room(
                         room.id,
-                        json.dumps({"type": "notification", "message": f"Game ended! {loser.username} lost and will get +1 hidden card next round. Click Ready to play again!"})
+                        json.dumps({"type": "notification", "message": f"Game ended! {player.username} lost and will get +1 hidden card next round. Click Ready to play again!"})
                     )
+                else:
+                    # Player who played earlier card WINS
+                    player.is_out = True
+                    logger.info(f"{player.username} has won!")
+                    
+                    await manager.send_personal_message(
+                        json.dumps({"type": "notification", "message": "You won! 🎉"}),
+                        player.id
+                    )
+                    
+                    # Check if only one player left (they lose)
+                    active_players = [p for p in room.players if not p.is_out]
+                    if len(active_players) == 1:
+                        # Reset all previous loser flags before marking new loser
+                        for p in room.players:
+                            p.is_loser = False
+                        
+                        # Last player loses
+                        loser = active_players[0]
+                        loser.is_out = True
+                        loser.is_loser = True  # Mark as loser for emoji display (stays through next game)
+                        logger.info(f"{loser.username} is the loser!")
+                        
+                        await manager.send_personal_message(
+                            json.dumps({"type": "notification", "message": "You lost! You'll get +1 hidden card next round. 😔"}),
+                            loser.id
+                        )
+                        
+                        # Game finished - transition to WAITING for next round
+                        room.phase = GamePhase.WAITING
+                        # Append loser to list (accumulates across rounds)
+                        if not hasattr(room, 'losers_from_previous_game'):
+                            room.losers_from_previous_game = []
+                        room.losers_from_previous_game.append(loser.id)
+                        
+                        # Reset all players to not ready for next round
+                        for p in room.players:
+                            p.ready = False
+                        
+                        # Send updated game state with WAITING phase
+                        await send_game_state(room)
+                        
+                        # Notify all players game ended
+                        await manager.broadcast_to_room(
+                            room.id,
+                            json.dumps({"type": "notification", "message": f"Game ended! {loser.username} lost and will get +1 hidden card next round. Click Ready to play again!"})
+                        )
             elif len(player.hidden_cards) > 0 and not player.has_picked_hidden_cards:
                 # Pick up hidden cards (stashed cards from phase 1) only when new pile started
                 player.hand.extend(player.hidden_cards)
                 player.hidden_cards = []
                 player.has_picked_hidden_cards = True
-                # Sort hand after picking up hidden cards
-                player.hand = sort_hand(player.hand)
+                # Sort hand after picking up hidden cards (with trump suit priority)
+                player.hand = sort_hand(player.hand, trump_suit=room.trump_suit)
                 logger.info(f"{player.username} picked up {len(player.hand)} hidden cards")
                 
                 await manager.send_personal_message(
@@ -1201,13 +1327,37 @@ async def handle_donate_cards(room: GameRoom, player: Player, message: dict):
         # Send updated game state so they see the updated hand and next recipient
         await send_game_state(room)
 
-def sort_hand(hand: List[Card]) -> List[Card]:
-    """Sort hand by suit and then by rank (descending) within each suit"""
-    # Define suit order: hearts, diamonds, clubs, spades
-    suit_order = {'hearts': 0, 'diamonds': 1, 'clubs': 2, 'spades': 3}
+def sort_hand(hand: List[Card], trump_suit: Optional[str] = None) -> List[Card]:
+    """Sort hand by suit and then by rank (descending) within each suit.
     
-    # Sort by suit first, then by rank within each suit (descending: high to low)
-    return sorted(hand, key=lambda card: (suit_order.get(card.suit, 4), -card.rank))
+    For phase 2 (when trump_suit is provided):
+    - 7 of spades always comes first (most powerful card)
+    - Trump suit comes first (after 7 of spades if present)
+    - Other spades come next (powerful beating cards)
+    - Remaining suits follow
+    - Within each suit, cards are sorted by rank descending (high to low)
+    """
+    def sort_key(card: Card):
+        # 7 of spades is always first
+        if card.suit == 'spades' and card.rank == 7:
+            return (0, 0)  # Highest priority
+        
+        # If trump suit is specified (phase 2)
+        if trump_suit:
+            if card.suit == trump_suit:
+                return (1, -card.rank)  # Trump suit first (after 7 of spades)
+            elif card.suit == 'spades':
+                return (2, -card.rank)  # Other spades second
+            else:
+                # Non-trump, non-spade suits
+                suit_order = {'hearts': 3, 'diamonds': 4, 'clubs': 5}
+                return (suit_order.get(card.suit, 6), -card.rank)
+        else:
+            # Phase 1: regular suit order
+            suit_order = {'hearts': 0, 'diamonds': 1, 'clubs': 2, 'spades': 3}
+            return (suit_order.get(card.suit, 4), -card.rank)
+    
+    return sorted(hand, key=sort_key)
 
 async def transition_to_phase_two(room: GameRoom):
     """Transition to phase 2 (battle phase)"""
@@ -1235,10 +1385,10 @@ async def transition_to_phase_two(room: GameRoom):
             player.has_picked_hidden_cards = True
             logger.info(f"{player.username} donated all cards, picked up {len(player.hand)} hidden cards at start of Phase 2")
     
-    # Sort all players' hands by suit and rank
+    # Sort all players' hands by suit and rank (with trump suit priority for phase 2)
     for player in room.players:
         if player.hand:
-            player.hand = sort_hand(player.hand)
+            player.hand = sort_hand(player.hand, trump_suit=room.trump_suit)
             logger.info(f"Sorted hand for {player.username}")
     
     # Reset bad card counters (donations already handled in donation phase)
@@ -1293,7 +1443,8 @@ async def send_game_state(room: GameRoom):
                 "is_out": p.is_out,
                 "has_donated": getattr(p, 'has_donated', False),
                 "has_picked_hidden_cards": p.has_picked_hidden_cards,
-                "hidden_cards_count": len(p.hidden_cards)  # Show count to everyone
+                "hidden_cards_count": len(p.hidden_cards),  # Show count to everyone
+                "is_loser": p.is_loser  # Show loser status for emoji display
             }
             
             # Only show own hand and locked cards
