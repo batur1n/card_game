@@ -460,11 +460,12 @@ function updatePlayersDisplay() {
         const isCurrentTurn = gameState.players[gameState.current_player_index]?.id === player.id;
         const classes = `player-item ${player.ready ? 'ready' : ''} ${isCurrentTurn ? 'current-turn' : ''}`;
         const hasPickedHidden = player.has_picked_hidden_cards ? '🔥' : '';
+        const isLoser = player.is_loser ? '🤡' : '';
         const hiddenCount = player.hidden_cards_count || 0;
         
         return `
             <div class="${classes}">
-                <span>${player.username} ${hasPickedHidden} ${player.id === gameState.player_id ? '(Ти)' : ''}</span>
+                <span>${player.username} ${hasPickedHidden}${isLoser} ${player.id === gameState.player_id ? '(Ти)' : ''}</span>
                 <div>
                     <span>Стопка: ${player.visible_stack ? player.visible_stack.length : 0}</span>
                     ${hiddenCount > 0 && !player.has_picked_hidden_cards ? `<br><small style="color: #d01632ff;">Прикуп: ${hiddenCount}</small>` : ''}
@@ -479,6 +480,7 @@ function updatePlayersDisplay() {
         const isCurrentPlayer = gameState.players[gameState.current_player_index]?.id === player.id;
         const isMe = player.id === gameState.player_id;
         const hasPickedHidden = player.has_picked_hidden_cards ? '🔥' : '';
+        const isLoser = player.is_loser ? '🤡' : '';
         
         // In Phase 2, show hand cards and hidden cards
         if (gameState.phase === 'phase_two') {
@@ -495,8 +497,8 @@ function updatePlayersDisplay() {
                         ${isMe ? '' : renderPlayerHandHidden(handSize)}
                     </div>
                     <div class="player-info">
-                        <h4>${player.username} ${hasPickedHidden} ${isMe ? '(You)' : ''} ${isCurrentPlayer ? '👈' : ''}</h4>
-                        <p>Cards: ${handSize}${player.is_out ? ' | OUT' : ''}</p>
+                        <h4>${player.username} ${hasPickedHidden}${isLoser} ${isMe ? '(You)' : ''} ${isCurrentPlayer ? '👈' : ''}</h4>
+                        <p>Cards: ${handSize}${player.is_out ? ' | ВИЙШОВ' : ''}</p>
                     </div>
                 </div>
             `;
@@ -515,7 +517,7 @@ function updatePlayersDisplay() {
                     </div>
                 </div>
                 <div class="player-info">
-                    <h4>${player.username} ${hasPickedHidden} ${isMe ? '(You)' : ''} ${isCurrentPlayer ? '👈' : ''}</h4>
+                    <h4>${player.username} ${hasPickedHidden}${isLoser} ${isMe ? '(Ти)' : ''} ${isCurrentPlayer ? '👈' : ''}</h4>
                     ${player.bad_card_counter > 0 ? `<p>Bad: ${player.bad_card_counter}</p>` : ''}
                 </div>
             </div>
@@ -682,7 +684,7 @@ function updateGameBoard() {
                 ).join('');
                 battlePile.classList.remove('empty');
             } else {
-                battlePile.innerHTML = '<span class="pile-label">Drop card here</span>';
+                battlePile.innerHTML = '<span class="pile-label">Клади карти сюди</span>';
                 battlePile.classList.add('empty');
             }
         } else {
@@ -1491,7 +1493,7 @@ function toggleDonationCard(cardIndex) {
         if (selectedDonationCards.size < stillNeeded) {
             selectedDonationCards.add(cardIndex);
         } else {
-            showNotification(`You can only select ${stillNeeded} more card(s) for this player`, 'error');
+            showNotification(`Ви можете вибрати тільки ${stillNeeded} карт(и) для цього гравця`, 'error');
             return;
         }
     }
@@ -1623,7 +1625,7 @@ function updatePhase2UI() {
             if (gameState.battle_pile && gameState.battle_pile.length > 0 && !gameState.pile_discard_in_progress) {
                 const takePileBtn = document.createElement('button');
                 takePileBtn.className = 'btn btn-secondary';
-                takePileBtn.textContent = 'Взять нижню';
+                takePileBtn.textContent = 'Взять нижню карту';
                 takePileBtn.onclick = takeBattlePile;
                 phase2Container.appendChild(takePileBtn);
             }
