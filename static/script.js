@@ -469,11 +469,29 @@ function updatePlayersDisplay() {
                 <div>
                     <span>Стопка: ${player.visible_stack ? player.visible_stack.length : 0}</span>
                     ${hiddenCount > 0 && !player.has_picked_hidden_cards ? `<br><small style="color: #d01632ff;">Прикуп: ${hiddenCount}</small>` : ''}
-                    ${player.bad_card_counter > 0 ? `<br><small style="color: #e74c3c;">Погані: ${player.bad_card_counter}</small>` : ''}
                 </div>
             </div>
         `;
     }).join('');
+    
+    // Update bad card players list
+    const badCardContainer = document.getElementById('badCardPlayersContainer');
+    const badCardList = document.getElementById('badCardPlayersList');
+    
+    if (gameState.bad_card_players && gameState.bad_card_players.length > 0) {
+        badCardContainer.classList.remove('hidden');
+        badCardList.innerHTML = gameState.bad_card_players.map((entry, index) => {
+            // Handle both old format (string) and new format (object with player_id and reason)
+            const playerId = typeof entry === 'string' ? entry : entry.player_id;
+            const reason = typeof entry === 'object' && entry.reason ? entry.reason : '';
+            const player = gameState.players.find(p => p.id === playerId);
+            return `<div style="padding: 5px; border-bottom: 1px solid #333;">
+                ${index + 1}. ${player ? player.username : 'Unknown'}${reason ? ` (${reason})` : ''}
+            </div>`;
+        }).join('');
+    } else {
+        badCardContainer.classList.add('hidden');
+    }
 
     // Update players area on game board
     playersArea.innerHTML = gameState.players.map(player => {
@@ -498,7 +516,7 @@ function updatePlayersDisplay() {
                     </div>
                     <div class="player-info">
                         <h4>${player.username} ${hasPickedHidden}${isLoser} ${isMe ? '(You)' : ''} ${isCurrentPlayer ? '👈' : ''}</h4>
-                        <p>Cards: ${handSize}${player.is_out ? ' | ВИЙШОВ' : ''}</p>
+                        <p>Карт: ${handSize}${player.is_out ? ' | ВИЙШОВ' : ''}</p>
                     </div>
                 </div>
             `;
@@ -518,7 +536,6 @@ function updatePlayersDisplay() {
                 </div>
                 <div class="player-info">
                     <h4>${player.username} ${hasPickedHidden}${isLoser} ${isMe ? '(Ти)' : ''} ${isCurrentPlayer ? '👈' : ''}</h4>
-                    ${player.bad_card_counter > 0 ? `<p>Bad: ${player.bad_card_counter}</p>` : ''}
                 </div>
             </div>
         `;
@@ -701,7 +718,7 @@ function updateGameBoard() {
             const discardedCount = gameState.discarded_count || 0;
             if (discardedCount > 0) {
                 const cardsToShow = Math.min(discardedCount, 8);
-                let discardedHTML = '<span class="pile-label">Discarded</span>';
+                let discardedHTML = '<span class="pile-label">Отбой</span>';
                 for (let i = 0; i < cardsToShow; i++) {
                     const offset = (i / cardsToShow) * 6;
                     discardedHTML += `<div class="discarded-card-back" style="top: ${10 + offset}px; left: ${10 + offset}px; z-index: ${i};">
@@ -710,7 +727,7 @@ function updateGameBoard() {
                 }
                 discardedPile.innerHTML = discardedHTML;
             } else {
-                discardedPile.innerHTML = '<span class="pile-label">Discarded</span>';
+                discardedPile.innerHTML = '<span class="pile-label">Отбой</span>';
             }
         } else {
             // Hide discarded pile in other phases
@@ -1336,53 +1353,234 @@ document.addEventListener('keydown', function(e) {
 function showDonationUI() {
     console.log('showDonationUI called');
     const myPlayer = gameState.players?.find(p => p.id === gameState.player_id);
-    const isMyTurn = gameState.players && 
-        gameState.players[gameState.current_player_index]?.id === gameState.player_id;
     
-    console.log('showDonationUI check:', {
-        isMyTurn,
-        myPlayerHand: myPlayer?.hand?.length || 0,
-        myPlayerBadCards: myPlayer?.bad_card_counter
-    });
+    // In the new system, all players can donate simultaneously to the current recipient
+    // Check if there's a current recipient
+    const aggregatedList = gameState.bad_card_players_aggregated || [];
     
-    if (!isMyTurn) {
-        console.log('Not my turn, hiding donation UI');
+    if (aggregatedList.length === 0) {
         hideDonationUI();
         return;
     }
     
-    // Check if there are players who need donations from ME (current player)
-    // Use donation tracker to see if I've completed my donations to each recipient
-    const playersNeedingCards = gameState.players.filter(p => {
-        if (p.id === gameState.player_id) return false; // Exclude self
-        if (p.bad_card_counter <= 0) return false; // No penalty, no need to donate
-        
-        // Check donation tracker to see how many cards I've donated to this player
-        const recipientTracker = gameState.donation_tracker?.[p.id] || {};
-        const myDonations = recipientTracker[gameState.player_id] || 0;
-        const stillNeeded = p.bad_card_counter - myDonations;
-        
-        return stillNeeded > 0; // This player still needs cards from me
-    });
+    const currentDonationIndex = gameState.current_donation_index || 0;
     
-    console.log('Players needing cards from me:', playersNeedingCards.map(p => ({
-        username: p.username, 
-        totalNeeds: p.bad_card_counter,
-        alreadyDonated: (gameState.donation_tracker?.[p.id] || {})[gameState.player_id] || 0,
-        stillNeeds: p.bad_card_counter - ((gameState.donation_tracker?.[p.id] || {})[gameState.player_id] || 0)
-    })));
-    
-    // If no one needs cards from me or I have no cards, the backend should have skipped my turn
-    // This should not happen, but just in case, hide the UI
-    if (!myPlayer.hand || myPlayer.hand.length === 0 || playersNeedingCards.length === 0) {
-        console.log('No donations needed from me - backend should have skipped this turn');
+    if (currentDonationIndex >= aggregatedList.length) {
+        // Donation phase complete
         hideDonationUI();
         return;
     }
     
-    console.log('Starting donation process for', playersNeedingCards.length, 'recipients');
-    // Start donation process with first player
-    showDonationForPlayer(playersNeedingCards, 0);
+    const currentRecipientEntry = aggregatedList[currentDonationIndex];
+    const currentRecipientId = currentRecipientEntry.player_id;
+    const cardsNeeded = currentRecipientEntry.card_count;
+    const reasons = currentRecipientEntry.reasons || [];
+    const currentRecipient = gameState.players.find(p => p.id === currentRecipientId);
+    
+    if (!currentRecipient) {
+        hideDonationUI();
+        return;
+    }
+    
+    // If I'm the recipient, show waiting UI
+    if (myPlayer.id === currentRecipientId) {
+        showRecipientWaitingUI(currentRecipient, reasons, cardsNeeded, currentDonationIndex);
+        return;
+    }
+    
+    // Check how many cards I've already donated for this entry
+    const donationTracker = gameState.donation_tracker || {};
+    const currentEntryTracker = donationTracker[currentDonationIndex] || {};
+    const alreadyDonated = currentEntryTracker[myPlayer.id] || 0;
+    
+    if (alreadyDonated >= cardsNeeded) {
+        // I've already donated all required cards, wait for others
+        showWaitingForOthersUI(currentRecipient, reasons, cardsNeeded);
+        return;
+    }
+    
+    // Check if I have cards to donate
+    if (!myPlayer.hand || myPlayer.hand.length === 0) {
+        hideDonationUI();
+        return;
+    }
+    
+    // Show donation interface for current recipient
+    showDonationForRecipient(currentRecipient, currentDonationIndex, reasons, cardsNeeded, alreadyDonated);
+}
+
+function showRecipientWaitingUI(recipient, reasons, cardsNeeded, donationIndex) {
+    const totalEntries = gameState.bad_card_players_aggregated.length;
+    const entryNumber = donationIndex + 1;
+    
+    let waitingHTML = '<div id="donationInterface" class="donation-interface">';
+    waitingHTML += `<h3>Ви отримуєте ${cardsNeeded} карт(и) від інших гравців</h3>`;
+    waitingHTML += `<p>Запис ${entryNumber} з ${totalEntries} у списку поганих карт</p>`;
+    if (reasons && reasons.length > 0) {
+        waitingHTML += `<p style="color: #d01632ff;">Причини: ${reasons.join(', ')}</p>`;
+    }
+    waitingHTML += `<p>Чекайте, поки інші гравці віддадуть вам карти...</p>`;
+    waitingHTML += '</div>';
+    
+    // Remove old interface if exists
+    const oldInterface = document.getElementById('donationInterface');
+    if (oldInterface) oldInterface.remove();
+    
+    // Add to game board
+    const gameBoard = document.querySelector('.game-board');
+    gameBoard.insertAdjacentHTML('beforeend', waitingHTML);
+}
+
+function showWaitingForOthersUI(recipient, reasons, cardsNeeded) {
+    let waitingHTML = '<div id="donationInterface" class="donation-interface">';
+    waitingHTML += `<h3>Очікування інших гравців...</h3>`;
+    waitingHTML += `<p>${recipient.username} отримує ${cardsNeeded} карт(и) від інших гравців</p>`;
+    if (reasons && reasons.length > 0) {
+        waitingHTML += `<p style="color: #d01632ff;">Причини: ${reasons.join(', ')}</p>`;
+    }
+    waitingHTML += `<p>Ви вже віддали свої карти</p>`;
+    waitingHTML += '</div>';
+    
+    // Remove old interface if exists
+    const oldInterface = document.getElementById('donationInterface');
+    if (oldInterface) oldInterface.remove();
+    
+    // Add to game board
+    const gameBoard = document.querySelector('.game-board');
+    gameBoard.insertAdjacentHTML('beforeend', waitingHTML);
+}
+
+function showDonationForRecipient(recipient, donationIndex, reasons, cardsNeeded, alreadyDonated) {
+    const myPlayer = gameState.players?.find(p => p.id === gameState.player_id);
+    
+    if (!myPlayer || !myPlayer.hand || myPlayer.hand.length === 0) {
+        return;
+    }
+    
+    // Calculate how many cards still need to be donated
+    const cardsRemaining = cardsNeeded - alreadyDonated;
+    
+    // Calculate position in list
+    const totalEntries = gameState.bad_card_players_aggregated.length;
+    const entryNumber = donationIndex + 1;
+    
+    // Show donation interface
+    let donationHTML = '<div id="donationInterface" class="donation-interface">';
+    donationHTML += `<h3>Віддайте ${cardsRemaining} карт(и) гравцю ${recipient.username}</h3>`;
+    donationHTML += `<p>Запис ${entryNumber} з ${totalEntries} у списку поганих карт (потрібно ${cardsNeeded}, віддано ${alreadyDonated})</p>`;
+    if (reasons && reasons.length > 0) {
+        donationHTML += `<p style="color: #d01632ff;">Причини: ${reasons.join(', ')}</p>`;
+    }
+    
+    // Show trump suit if available
+    if (gameState.trump_suit) {
+        donationHTML += `<div class="donation-trump-info">Козир: ${getSuitSymbol(gameState.trump_suit)}</div>`;
+    }
+    
+    donationHTML += `<p>Виберіть ${cardsRemaining} карт(и) зі своєї руки:</p>`;
+    
+    donationHTML += '<div class="donation-my-stack">';
+    donationHTML += myPlayer.hand.map((card, index) => {
+        const isSelected = selectedDonationCards.has(index);
+        return `<div class="card ${card.suit} ${isSelected ? 'selected-for-donation' : 'donation-selectable'}" 
+                    onclick="toggleDonationCardForRecipient(${index}, ${cardsRemaining})"
+                    data-card-index="${index}">
+            <div class="rank rank-top-left">${getRankSymbol(card.rank)}</div>
+            <div class="suit suit-top-left">${getSuitSymbol(card.suit)}</div>
+            <div class="rank rank-bottom-right">${getRankSymbol(card.rank)}</div>
+            <div class="suit suit-bottom-right">${getSuitSymbol(card.suit)}</div>
+        </div>`;
+    }).join('');
+    donationHTML += '</div>';
+    
+    donationHTML += '<div class="donation-buttons">';
+    donationHTML += `<button class="btn btn-primary" onclick="confirmDonationToRecipient('${recipient.id}')">Підтвердити</button>`;
+    donationHTML += '</div>';
+    donationHTML += '</div>';
+    
+    // Remove old interface if exists
+    const oldInterface = document.getElementById('donationInterface');
+    if (oldInterface) oldInterface.remove();
+    
+    // Add to game board
+    const gameBoard = document.querySelector('.game-board');
+    gameBoard.insertAdjacentHTML('beforeend', donationHTML);
+}
+
+let selectedDonationCards = new Set();
+
+function toggleDonationCardForRecipient(cardIndex, maxCards) {
+    if (selectedDonationCards.has(cardIndex)) {
+        selectedDonationCards.delete(cardIndex);
+    } else {
+        // Check if we haven't exceeded the limit
+        if (selectedDonationCards.size >= maxCards) {
+            showNotification(`Ви можете вибрати тільки ${maxCards} карт(и)`, 'error');
+            return;
+        }
+        selectedDonationCards.add(cardIndex);
+    }
+    
+    // Update visual selection
+    updateDonationCardSelection();
+}
+
+function confirmDonationToRecipient(recipientId) {
+    if (selectedDonationCards.size === 0) {
+        showNotification('Виберіть карти для віддачі', 'error');
+        return;
+    }
+    
+    // Get the current recipient entry to validate card count
+    const aggregatedList = gameState.bad_card_players_aggregated || [];
+    const currentDonationIndex = gameState.current_donation_index || 0;
+    const currentRecipientEntry = aggregatedList[currentDonationIndex];
+    const myPlayer = gameState.players?.find(p => p.id === gameState.player_id);
+    
+    if (currentRecipientEntry && myPlayer) {
+        const cardsNeeded = currentRecipientEntry.card_count;
+        const donationTracker = gameState.donation_tracker || {};
+        const currentEntryTracker = donationTracker[currentDonationIndex] || {};
+        const alreadyDonated = currentEntryTracker[myPlayer.id] || 0;
+        const cardsRemaining = cardsNeeded - alreadyDonated;
+        
+        // Validate that player selected exactly the remaining cards needed
+        if (selectedDonationCards.size !== cardsRemaining) {
+            showNotification(`Ви повинні вибрати рівно ${cardsRemaining} карт(и)`, 'error');
+            return;
+        }
+    }
+    
+    const selectedIndices = Array.from(selectedDonationCards);
+    
+    // Send donation
+    if (ws) {
+        ws.send(JSON.stringify({
+            action: 'donate_cards',
+            donations: {
+                [recipientId]: selectedIndices
+            }
+        }));
+    }
+    
+    // Clear selection
+    selectedDonationCards.clear();
+    
+    // Hide interface (will show waiting screen on next state update)
+    hideDonationUI();
+}
+
+function updateDonationCardSelection() {
+    const cards = document.querySelectorAll('.donation-my-stack .card');
+    cards.forEach((cardEl, index) => {
+        if (selectedDonationCards.has(index)) {
+            cardEl.classList.add('selected-for-donation');
+            cardEl.classList.remove('donation-selectable');
+        } else {
+            cardEl.classList.remove('selected-for-donation');
+            cardEl.classList.add('donation-selectable');
+        }
+    });
 }
 
 function hideDonationUI() {
@@ -1390,6 +1588,13 @@ function hideDonationUI() {
     if (donationInterface) {
         donationInterface.remove();
     }
+    selectedDonationCards.clear();
+}
+
+// Old donation functions - keeping for backward compatibility but not used
+function showDonationForPlayer(recipients, recipientIndex) {
+    // Deprecated - new system processes one recipient at a time
+    return;
 }
 
 let currentDonationRecipients = [];
@@ -1421,12 +1626,11 @@ function showDonationForPlayer(recipients, recipientIndex) {
         return;
     }
     
-    // Check if we've already fully donated to this recipient
-    // (based on game state's donation tracking)
+    // Calculate how many cards still needed from this recipient
     const donationTracker = gameState.donation_tracker || {};
     const recipientDonations = donationTracker[recipient.id] || {};
     const myDonations = recipientDonations[myPlayer.id] || 0;
-    const stillNeeded = recipient.bad_card_counter - myDonations;
+    const stillNeeded = recipient.stillNeeds; // Already calculated in showDonationUI
     
     if (stillNeeded <= 0) {
         // Already completed donations to this recipient, try next
@@ -1437,7 +1641,7 @@ function showDonationForPlayer(recipients, recipientIndex) {
     // Show donation interface for this specific recipient
     let donationHTML = '<div id="donationInterface" class="donation-interface">';
     donationHTML += `<h3>Віддайте карти гравцю ${recipient.username}</h3>`;
-    donationHTML += `<p>Потрібно ще ${stillNeeded} карт(и) від вас</p>`;
+    donationHTML += `<p>Потрібно ще ${stillNeeded} карт(и) від вас (всього ${recipient.totalNeeds})</p>`;
     
     // Show trump suit if available
     if (gameState.trump_suit) {
@@ -1474,76 +1678,20 @@ function showDonationForPlayer(recipients, recipientIndex) {
     gameBoard.insertAdjacentHTML('beforeend', donationHTML);
 }
 
-let selectedDonationCards = new Set();
-
+// Old functions - deprecated (kept for backward compatibility)
 function toggleDonationCard(cardIndex) {
-    const recipient = currentDonationRecipients[currentRecipientIndex];
-    const myPlayer = gameState.players?.find(p => p.id === gameState.player_id);
-    
-    // Calculate how many cards still needed
-    const donationTracker = gameState.donation_tracker || {};
-    const recipientDonations = donationTracker[recipient.id] || {};
-    const myDonations = recipientDonations[myPlayer.id] || 0;
-    const stillNeeded = recipient.bad_card_counter - myDonations;
-    
-    if (selectedDonationCards.has(cardIndex)) {
-        selectedDonationCards.delete(cardIndex);
-    } else {
-        // Check if we haven't exceeded the limit
-        if (selectedDonationCards.size < stillNeeded) {
-            selectedDonationCards.add(cardIndex);
-        } else {
-            showNotification(`Ви можете вибрати тільки ${stillNeeded} карт(и) для цього гравця`, 'error');
-            return;
-        }
-    }
-    
-    // Update visual selection
-    updateDonationCardSelection();
-}
-
-function updateDonationCardSelection() {
-    const cards = document.querySelectorAll('.donation-selectable, .selected-for-donation');
-    cards.forEach(card => {
-        const index = parseInt(card.dataset.cardIndex);
-        if (selectedDonationCards.has(index)) {
-            card.classList.remove('donation-selectable');
-            card.classList.add('selected-for-donation');
-        } else {
-            card.classList.remove('selected-for-donation');
-            card.classList.add('donation-selectable');
-        }
-    });
+    // Deprecated - use toggleDonationCardForRecipient instead
+    return;
 }
 
 function confirmDonationToPlayer() {
-    const recipient = currentDonationRecipients[currentRecipientIndex];
-    
-    // Send donation for THIS recipient immediately
-    const donationsForThisRecipient = {};
-    if (selectedDonationCards.size > 0) {
-        donationsForThisRecipient[recipient.id] = Array.from(selectedDonationCards);
-    }
-    
-    if (ws) {
-        ws.send(JSON.stringify({
-            action: 'donate_cards',
-            donations: donationsForThisRecipient
-        }));
-    }
-    
-    // Clear selection and wait for server to send updated game state
-    selectedDonationCards.clear();
-    hideDonationUI();
-    
-    // Don't immediately show next recipient - wait for server update
-    // The server will send updated game state and showDonationUI() will be called again
+    // Deprecated - use confirmDonationToRecipient instead
+    return;
 }
 
 function submitAllDonations() {
-    // This function is no longer used but kept for compatibility
-    // We now send donations one recipient at a time
-    hideDonationUI();
+    // Deprecated - no longer used
+    return;
 }
 
 function updateUI() {
@@ -1553,24 +1701,11 @@ function updateUI() {
     updateHand();
     updateGameActions();
     
-    // Handle donation phase
+    // Handle donation phase - NEW SYSTEM: all non-recipients donate simultaneously
     if (gameState.phase === 'donation') {
-        const isMyTurn = gameState.players && 
-            gameState.players[gameState.current_player_index]?.id === gameState.player_id;
-        const currentPlayer = gameState.players && gameState.players[gameState.current_player_index];
-        console.log('Donation phase:', {
-            isMyTurn,
-            currentPlayerUsername: currentPlayer?.username,
-            myPlayerId: gameState.player_id,
-            currentPlayerIndex: gameState.current_player_index
-        });
-        if (isMyTurn) {
-            showDonationUI();
-            hideWaitingModal();
-        } else {
-            hideDonationUI();
-            showWaitingModal('Фаза дарування', `Чекаємо, поки ${currentPlayer?.username} віддасть карти...`);
-        }
+        // In new system, show donation UI for all players (function handles who can donate)
+        showDonationUI();
+        hideWaitingModal();
     } else {
         hideDonationUI();
         hideWaitingModal();
